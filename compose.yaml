@@ -9,6 +9,7 @@ services:
       HTTP_ADDRESS: ${HTTP_ADDRESS:-:8080}
       DATABASE_URL: ${DATABASE_URL:-postgres://orderflow:local-dev-password@postgres:5432/orderflow?sslmode=disable}
       DATABASE_TIMEOUT: ${DATABASE_TIMEOUT:-5}
+      RESERVATION_HOLD_SECONDS: ${RESERVATION_HOLD_SECONDS:-600}
     depends_on:
       migrate:
         condition: service_completed_successfully
