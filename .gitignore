@@ -1,0 +1,24 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Go build/test output
+/bin/
+/dist/
+/coverage.out
+/coverage.html
+*.test
+
+# Local data and logs
+/data/
+/logs/
+*.log
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
