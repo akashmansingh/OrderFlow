@@ -34,9 +34,10 @@ The project remains a single-VM portfolio deployment. It gains a real asynchrono
 1. Consume `reservation.held.v1` events from Redpanda and commit offsets only after the database transaction succeeds.
 2. In one PostgreSQL transaction, insert the event ID into `processed_events`. A duplicate key means the event was already handled and may be safely acknowledged.
 3. Lock the reservation and its event inventory row. For a still-valid `held` reservation, simulate payment using `SIMULATED_PAYMENT_RESULT` (`approve` by default; `reject` for deterministic failure demos).
-4. On approval, atomically set reservation status to `confirmed`, decrement `held_quantity`, increment `confirmed_quantity`, and add `reservation.confirmed.v1` to the outbox.
-5. On rejection, atomically set status to `cancelled`, decrement `held_quantity`, and add `reservation.cancelled.v1` to the outbox.
-6. A scheduled expiry loop locks expired held reservations, sets them to `expired`, decrements `held_quantity`, and writes `reservation.expired.v1` through the same outbox path.
+4. If a held event arrives after its expiry, mark it `expired` and release held inventory in the same transaction; the scheduled expiry loop remains a fallback for events that have not yet been consumed.
+5. On approval, atomically set reservation status to `confirmed`, decrement `held_quantity`, increment `confirmed_quantity`, and add `reservation.confirmed.v1` to the outbox.
+6. On rejection, atomically set status to `cancelled`, decrement `held_quantity`, and add `reservation.cancelled.v1` to the outbox.
+7. A scheduled expiry loop locks expired held reservations, sets them to `expired`, decrements `held_quantity`, and writes `reservation.expired.v1` through the same outbox path.
 
 ### Failure guarantees
 
@@ -48,6 +49,9 @@ The project remains a single-VM portfolio deployment. It gains a real asynchrono
 ## Interfaces and documentation
 
 - Document emitted event envelope fields: `id`, `type`, `aggregate_id`, `occurred_at`, and `payload`.
+- Terminal-event payloads use `reservation_id`, `event_id`, `customer_id`, `quantity`, `status`, and `reason`. `reason` is `payment_rejected` for cancellation, `hold_expired` for expiry, and `null` for confirmation.
+- The worker acknowledges and ignores terminal events it receives from `reservation-events`; they are published for future consumers and must not trigger a second workflow transition.
+- If a valid held event references a reservation that no longer exists, log the stale event and acknowledge it so it cannot block its consumer partition.
 - Keep the existing HTTP reservation response asynchronous: `held` means processing is pending; clients query the reservation endpoint for the final status.
 - Rewrite the README with project purpose, component diagram, API quick start, local stack commands, ports, test commands, CI/CD behavior, and current limitations.
 
