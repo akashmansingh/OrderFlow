@@ -13,6 +13,7 @@ import (
 	"github.com/theRiddler9/OrderFlow/internal/config"
 	"github.com/theRiddler9/OrderFlow/internal/database"
 	"github.com/theRiddler9/OrderFlow/internal/httpapi"
+	"github.com/theRiddler9/OrderFlow/internal/reservation"
 )
 
 func main() {
@@ -39,7 +40,8 @@ func run(logger *slog.Logger) error {
 	}
 	defer databasePool.Close()
 
-	api := httpapi.NewServer(databasePool, logger)
+	reservationService := reservation.NewService(databasePool, configuration.ReservationHold)
+	api := httpapi.NewServer(databasePool, reservationService, logger)
 	httpServer := &http.Server{
 		Addr:              configuration.HTTPAddress,
 		Handler:           api.Handler(),
