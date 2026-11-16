@@ -36,7 +36,7 @@ The services are bound to `127.0.0.1`, so they are not exposed to other machines
 
 | Service | Address | Purpose |
 | --- | --- | --- |
-| PostgreSQL | `localhost:5432` | Authoritative application data |
+| PostgreSQL | `localhost:5433` | Authoritative application data |
 | pgAdmin | `http://localhost:5050` | PostgreSQL administration UI |
 | Redis | `localhost:6379` | Holds and rate-limiting support |
 | Redpanda | `localhost:19092` | Kafka-compatible local broker |
@@ -48,7 +48,7 @@ The services are bound to `127.0.0.1`, so they are not exposed to other machines
 3. Select **Add New Server**.
 4. Set **Name** to `OrderFlow Local`.
 5. On the **Connection** tab, set **Host name/address** to `postgres`, **Port** to `5432`, **Maintenance database** to `orderflow`, **Username** to `orderflow`, and **Password** to `local-dev-password`.
-6. Save. Use `postgres`, not `localhost`, because pgAdmin runs inside the same Compose network as PostgreSQL.
+6. Save. Use `postgres`, not `localhost`, because pgAdmin runs inside the same Compose network as PostgreSQL. Tools running directly on your computer use `localhost:5433`.
 
 The Compose migration service applies the versioned schema automatically before the API starts. To apply it without starting the API, run:
 
