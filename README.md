@@ -2,7 +2,7 @@
 
 Go ticket reservation backend focused on safe inventory allocation under contention and a recoverable asynchronous workflow.
 
-The project is at the architecture/setup stage. See [the architecture](docs/architecture.md), [repository instructions](AGENTS.md), and [workspace working rules](docs/WORKSPACE_RULES.md) before implementation.
+See [the architecture](docs/architecture.md), [local Docker and pgAdmin setup](docs/local-development.md), [testing](docs/testing.md), [CI/CD deployment](docs/deployment.md), [repository instructions](AGENTS.md), and [workspace working rules](docs/WORKSPACE_RULES.md).
 
 ## Initial direction
 
