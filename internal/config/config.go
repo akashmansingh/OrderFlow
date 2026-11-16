@@ -14,11 +14,16 @@ type Config struct {
 	HTTPAddress     string
 	DatabaseURL     string
 	DatabaseTimeout time.Duration
+	ReservationHold time.Duration
 }
 
 // Load reads and validates the configuration required by the reservation API.
 func Load() (Config, error) {
 	timeout, err := durationFromEnv("DATABASE_TIMEOUT", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	holdDuration, err := durationFromEnv("RESERVATION_HOLD_SECONDS", 10*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
@@ -28,6 +33,7 @@ func Load() (Config, error) {
 		HTTPAddress:     valueOrDefault("HTTP_ADDRESS", ":8080"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		DatabaseTimeout: timeout,
+		ReservationHold: holdDuration,
 	}
 
 	if config.DatabaseURL == "" {
