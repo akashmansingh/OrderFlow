@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -116,7 +117,7 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, destination
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "request body must be valid JSON"})
 		return err
 	}
-	if decoder.More() {
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "request body must contain one JSON value"})
 		return errors.New("multiple JSON values in request")
 	}
