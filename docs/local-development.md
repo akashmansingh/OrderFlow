@@ -44,11 +44,13 @@ The services are bound to `127.0.0.1`, so they are not exposed to other machines
 ## Register PostgreSQL in pgAdmin
 
 1. Open `http://localhost:5050`.
-2. Sign in with `admin@orderflow.local` and `local-dev-password`, unless you changed those values in `.env`.
+2. Sign in with `admin@orderflow.example` and `local-dev-password`, unless you changed those values in `.env`.
 3. Select **Add New Server**.
 4. Set **Name** to `OrderFlow Local`.
 5. On the **Connection** tab, set **Host name/address** to `postgres`, **Port** to `5432`, **Maintenance database** to `orderflow`, **Username** to `orderflow`, and **Password** to `local-dev-password`.
 6. Save. Use `postgres`, not `localhost`, because pgAdmin runs inside the same Compose network as PostgreSQL. Tools running directly on your computer use `localhost:5433`.
+
+If you use a separately installed pgAdmin desktop application instead of the Compose pgAdmin service, set the host to `localhost` and port to `5433`.
 
 The Compose migration service applies the versioned schema automatically before the API starts. To apply it without starting the API, run:
 
