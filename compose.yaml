@@ -10,6 +10,8 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgres://orderflow:local-dev-password@postgres:5432/orderflow?sslmode=disable}
       DATABASE_TIMEOUT: ${DATABASE_TIMEOUT:-5}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     ports:
@@ -30,6 +32,18 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+
+  migrate:
+    image: migrate/migrate:v4.17.1
+    command:
+      - -path=/migrations
+      - -database=postgres://orderflow:local-dev-password@postgres:5432/orderflow?sslmode=disable
+      - up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
 
   pgadmin:
     image: dpage/pgadmin4:8.14
