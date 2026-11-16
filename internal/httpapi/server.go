@@ -8,25 +8,32 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/theRiddler9/OrderFlow/internal/reservation"
 )
 
 // Server exposes the HTTP interface for the reservation API.
 type Server struct {
 	database *pgxpool.Pool
+	service  *reservation.Service
 	logger   *slog.Logger
 	handler  http.Handler
 }
 
 // NewServer creates the API routes and middleware.
-func NewServer(database *pgxpool.Pool, logger *slog.Logger) *Server {
+func NewServer(database *pgxpool.Pool, service *reservation.Service, logger *slog.Logger) *Server {
 	server := &Server{
 		database: database,
+		service:  service,
 		logger:   logger,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
+	mux.HandleFunc("POST /v1/events", server.createEvent)
+	mux.HandleFunc("GET /v1/events/{eventID}", server.getEvent)
+	mux.HandleFunc("POST /v1/events/{eventID}/reservations", server.createReservation)
+	mux.HandleFunc("GET /v1/reservations/{reservationID}", server.getReservation)
 	server.handler = server.recoverPanics(server.logRequests(mux))
 
 	return server
