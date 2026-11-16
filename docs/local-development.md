@@ -50,7 +50,13 @@ The services are bound to `127.0.0.1`, so they are not exposed to other machines
 5. On the **Connection** tab, set **Host name/address** to `postgres`, **Port** to `5432`, **Maintenance database** to `orderflow`, **Username** to `orderflow`, and **Password** to `local-dev-password`.
 6. Save. Use `postgres`, not `localhost`, because pgAdmin runs inside the same Compose network as PostgreSQL.
 
-At this stage the database is empty. The migration runner will be added with the Reservation API implementation; apply migrations through that runner rather than pasting schema files manually into pgAdmin.
+The Compose migration service applies the versioned schema automatically before the API starts. To apply it without starting the API, run:
+
+```powershell
+docker compose run --rm migrate
+```
+
+Apply schema changes through migration files and this runner rather than pasting SQL manually into pgAdmin.
 
 ## Run and stop the stack
 
