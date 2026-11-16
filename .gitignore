@@ -8,6 +8,8 @@
 # Go build/test output
 /bin/
 /dist/
+/api
+/api.exe
 /coverage.out
 /coverage.html
 *.test
