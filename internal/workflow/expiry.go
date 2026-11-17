@@ -40,17 +40,23 @@ func (expiry *Expiry) RunOnce(ctx context.Context) error {
 	}
 	defer rows.Close()
 
+	var expired []HeldReservation
 	for rows.Next() {
 		var reservation HeldReservation
 		if err := rows.Scan(&reservation.ReservationID, &reservation.EventID, &reservation.CustomerID, &reservation.Quantity, &reservation.ExpiresAt); err != nil {
 			return fmt.Errorf("scan expired reservation: %w", err)
 		}
-		if err := transitionReservation(ctx, tx, reservation, "expired", "hold_expired"); err != nil {
-			return err
-		}
+		expired = append(expired, reservation)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate expired reservations: %w", err)
+	}
+	rows.Close()
+
+	for _, reservation := range expired {
+		if err := transitionReservation(ctx, tx, reservation, "expired", "hold_expired"); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit expiry transaction: %w", err)
