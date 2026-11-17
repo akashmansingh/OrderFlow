@@ -14,7 +14,10 @@ func NewProducer(brokers []string) (*kgo.Client, error) {
 	if len(brokers) == 0 {
 		return nil, fmt.Errorf("at least one Kafka broker is required")
 	}
-	return kgo.NewClient(kgo.SeedBrokers(brokers...))
+	return kgo.NewClient(
+		kgo.SeedBrokers(brokers...),
+		kgo.AllowAutoTopicCreation(),
+	)
 }
 
 // Publisher sends event envelopes to one topic.
