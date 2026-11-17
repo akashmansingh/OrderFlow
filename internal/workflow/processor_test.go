@@ -1,6 +1,7 @@
 package workflow_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -29,6 +30,14 @@ func TestParseHeldReservationPayload(t *testing.T) {
 	}
 	if !payload.ExpiresAt.Equal(time.Date(2026, 11, 17, 12, 10, 0, 0, time.UTC)) {
 		t.Fatalf("ExpiresAt = %s", payload.ExpiresAt)
+	}
+}
+
+func TestProcessorAcknowledgesTerminalEventWithoutDatabaseWork(t *testing.T) {
+	processor := workflow.NewProcessor(nil, "approve")
+	err := processor.Handle(context.Background(), events.Envelope{Type: "reservation.confirmed.v1"})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
 	}
 }
 
