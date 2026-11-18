@@ -22,8 +22,7 @@ type createEventRequest struct {
 }
 
 type createReservationRequest struct {
-	CustomerID string `json:"customer_id"`
-	Quantity   int    `json:"quantity"`
+	Quantity int `json:"quantity"`
 }
 
 func (server *Server) createEvent(response http.ResponseWriter, request *http.Request) {
@@ -62,16 +61,22 @@ func (server *Server) createReservation(response http.ResponseWriter, request *h
 		return
 	}
 
+	customerID, ok := subjectFromContext(request.Context())
+	if !ok {
+		server.writeUnauthorized(response)
+		return
+	}
+
 	var body createReservationRequest
 	if err := decodeJSON(response, request, &body); err != nil {
 		return
 	}
 
 	eventID := request.PathValue("eventID")
-	requestHash := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", eventID, body.CustomerID, body.Quantity)))
+	requestHash := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", eventID, customerID, body.Quantity)))
 	reservationRecord, err := server.service.CreateReservation(request.Context(), reservation.CreateReservationInput{
 		EventID:        eventID,
-		CustomerID:     body.CustomerID,
+		CustomerID:     customerID,
 		Quantity:       body.Quantity,
 		IdempotencyKey: idempotencyKey,
 		RequestHash:    requestHash[:],
@@ -85,7 +90,13 @@ func (server *Server) createReservation(response http.ResponseWriter, request *h
 }
 
 func (server *Server) getReservation(response http.ResponseWriter, request *http.Request) {
-	reservationRecord, err := server.service.GetReservation(request.Context(), request.PathValue("reservationID"))
+	customerID, ok := subjectFromContext(request.Context())
+	if !ok {
+		server.writeUnauthorized(response)
+		return
+	}
+
+	reservationRecord, err := server.service.GetReservationForCustomer(request.Context(), request.PathValue("reservationID"), customerID)
 	if err != nil {
 		server.writeServiceError(response, err)
 		return

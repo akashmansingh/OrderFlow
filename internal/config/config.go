@@ -21,9 +21,13 @@ type Config struct {
 	KafkaGroupID           string
 	WorkerPollInterval     time.Duration
 	SimulatedPaymentResult string
+	JWTSecret              string
+	JWTAccessTokenMinutes  int
+	JWTIssuer              string
+	JWTAudience            string
 }
 
-// Load reads and validates the configuration required by the reservation API.
+// Load reads configuration shared by the API and worker.
 func Load() (Config, error) {
 	timeout, err := durationFromEnv("DATABASE_TIMEOUT", 5*time.Second)
 	if err != nil {
@@ -45,6 +49,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	accessTokenMinutes, err := positiveIntFromEnv("JWT_ACCESS_TOKEN_MINUTES", 15)
+	if err != nil {
+		return Config{}, err
+	}
 
 	config := Config{
 		Environment:            valueOrDefault("APP_ENV", "development"),
@@ -57,6 +65,10 @@ func Load() (Config, error) {
 		KafkaGroupID:           valueOrDefault("KAFKA_GROUP_ID", "orderflow-workflow-worker"),
 		WorkerPollInterval:     pollInterval,
 		SimulatedPaymentResult: paymentResult,
+		JWTSecret:              os.Getenv("JWT_SECRET"),
+		JWTAccessTokenMinutes:  accessTokenMinutes,
+		JWTIssuer:              valueOrDefault("JWT_ISSUER", "orderflow"),
+		JWTAudience:            valueOrDefault("JWT_AUDIENCE", "orderflow-api"),
 	}
 
 	if config.DatabaseURL == "" {
@@ -68,6 +80,25 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("DATABASE_URL must be a valid connection URL")
 	}
 
+	return config, nil
+}
+
+// LoadAPI loads shared configuration and requires the API-only JWT signing settings.
+// The worker does not need the signing secret, so it continues to use Load.
+func LoadAPI() (Config, error) {
+	config, err := Load()
+	if err != nil {
+		return Config{}, err
+	}
+	if len(config.JWTSecret) < 32 {
+		return Config{}, fmt.Errorf("JWT_SECRET must be at least 32 bytes")
+	}
+	if config.JWTIssuer == "" || config.JWTAudience == "" {
+		return Config{}, fmt.Errorf("JWT_ISSUER and JWT_AUDIENCE are required")
+	}
+	if config.JWTAccessTokenMinutes <= 0 {
+		return Config{}, fmt.Errorf("JWT_ACCESS_TOKEN_MINUTES must be a positive number of minutes")
+	}
 	return config, nil
 }
 
@@ -91,6 +122,19 @@ func paymentResultFromEnv() (string, error) {
 		return "", fmt.Errorf("SIMULATED_PAYMENT_RESULT must be approve or reject")
 	}
 	return result, nil
+}
+
+func positiveIntFromEnv(key string, fallback int) (int, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return parsed, nil
 }
 
 func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) {

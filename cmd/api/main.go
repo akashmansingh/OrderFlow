@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/theRiddler9/OrderFlow/internal/auth"
 	"github.com/theRiddler9/OrderFlow/internal/config"
 	"github.com/theRiddler9/OrderFlow/internal/database"
 	"github.com/theRiddler9/OrderFlow/internal/httpapi"
@@ -26,7 +27,17 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
-	configuration, err := config.Load()
+	configuration, err := config.LoadAPI()
+	if err != nil {
+		return err
+	}
+
+	tokenManager, err := auth.NewTokenManager(
+		configuration.JWTSecret,
+		configuration.JWTIssuer,
+		configuration.JWTAudience,
+		time.Duration(configuration.JWTAccessTokenMinutes)*time.Minute,
+	)
 	if err != nil {
 		return err
 	}
@@ -41,7 +52,8 @@ func run(logger *slog.Logger) error {
 	defer databasePool.Close()
 
 	reservationService := reservation.NewService(databasePool, configuration.ReservationHold)
-	api := httpapi.NewServer(databasePool, reservationService, logger)
+	authService := auth.NewService(auth.NewPostgresStore(databasePool), tokenManager)
+	api := httpapi.NewServer(databasePool, reservationService, authService, logger)
 	httpServer := &http.Server{
 		Addr:              configuration.HTTPAddress,
 		Handler:           api.Handler(),

@@ -14,22 +14,30 @@ PostgreSQL is the source of truth. The API creates `held` reservations atomicall
 
 ```powershell
 Copy-Item .env.example .env
+$jwtSecret = -join ((1..48) | ForEach-Object { '{0:X2}' -f (Get-Random -Maximum 256) })
+(Get-Content .env) -replace '^JWT_SECRET=.*', "JWT_SECRET=$jwtSecret" | Set-Content .env
 docker compose up -d --build --wait
 Invoke-WebRequest http://127.0.0.1:8080/healthz
 ```
+
+`JWT_SECRET` must be at least 32 bytes and is local to your ignored `.env` file. The API refuses to start without it.
 
 Open pgAdmin at `http://localhost:5050`. The Compose pgAdmin service connects to PostgreSQL at `postgres:5432`; desktop tools on Windows use `localhost:5433`.
 
 ## API
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/healthz` | Process health |
-| `GET` | `/readyz` | PostgreSQL readiness |
-| `POST` | `/v1/events` | Create a ticketed event |
-| `GET` | `/v1/events/{eventID}` | Read capacity and availability state |
-| `POST` | `/v1/events/{eventID}/reservations` | Create a held reservation; requires `Idempotency-Key` |
-| `GET` | `/v1/reservations/{reservationID}` | Read asynchronous reservation status |
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/healthz` | Public | Process health |
+| `GET` | `/readyz` | Public | PostgreSQL readiness |
+| `POST` | `/v1/auth/register` | Public | Create a user with email and bcrypt password |
+| `POST` | `/v1/auth/login` | Public | Receive a short-lived Bearer access token |
+| `POST` | `/v1/events` | Bearer | Create a ticketed event |
+| `GET` | `/v1/events/{eventID}` | Bearer | Read capacity and availability state |
+| `POST` | `/v1/events/{eventID}/reservations` | Bearer | Create a held reservation; requires `Idempotency-Key` |
+| `GET` | `/v1/reservations/{reservationID}` | Bearer | Read your asynchronous reservation status |
+
+Register with `{"email":"user@example.com","password":"correct horse battery"}`, log in with the same credentials, then send `Authorization: Bearer <access_token>` on protected routes. The access token subject becomes the reservation `customer_id`; a client-supplied `customer_id` is rejected.
 
 ## Services
 
@@ -47,6 +55,7 @@ Open pgAdmin at `http://localhost:5050`. The Compose pgAdmin service connects to
 - [Architecture](docs/architecture.md)
 - [Local Docker and pgAdmin setup](docs/local-development.md)
 - [Testing](docs/testing.md)
+- [JWT authentication ADR](docs/decisions/0001-jwt-authentication.md)
 - [CI/CD and VM deployment](docs/deployment.md)
 - [Repository instructions](AGENTS.md)
 
@@ -61,4 +70,4 @@ docker compose config --quiet
 
 ## Current boundaries
 
-Payments are simulated with `SIMULATED_PAYMENT_RESULT=approve|reject`. JWT authentication, Redis caching/rate limiting, dead-letter handling, tracing, real payments, Kubernetes, and high availability are planned later; this project does not claim exactly-once messaging.
+Payments are simulated with `SIMULATED_PAYMENT_RESULT=approve|reject`. JWT access tokens provide first-party authentication with no refresh tokens, revocation list, roles, or external identity provider. Redis caching/rate limiting, dead-letter handling, tracing, real payments, Kubernetes, and high availability are planned later; this project does not claim exactly-once messaging.

@@ -24,7 +24,7 @@ Do not commit any of these values or place them in `.env.example`.
 
 ## VM preparation
 
-Before the first deploy, install Docker Engine with Compose support, create the deployment account, clone the repository into `DEPLOY_PATH`, and give that account Docker access. Create production-only environment values on the VM in a local `.env` file. The workflow never transfers secrets from the repository.
+Before the first deploy, install Docker Engine with Compose support, create the deployment account, clone the repository into `DEPLOY_PATH`, and give that account Docker access. Create production-only environment values on the VM in a local `.env` file. Set `JWT_SECRET` there to a VM-local random secret of at least 32 bytes and rotate it only with an accepted user logout period; the 15-minute access tokens remain valid until they expire. The workflow never transfers secrets from the repository.
 
 The current Compose file binds API, PostgreSQL, Redis, Redpanda, and pgAdmin ports to `127.0.0.1`. This is correct for local development and VM-internal health checks. A future public deployment needs a separately configured HTTPS reverse proxy that exposes only the API; PostgreSQL, Redis, Redpanda, and pgAdmin must remain private.
 

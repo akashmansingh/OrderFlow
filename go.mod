@@ -3,9 +3,11 @@ module github.com/theRiddler9/OrderFlow
 go 1.27.0
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/twmb/franz-go v1.22.3
+	golang.org/x/crypto v0.44.0
 )
 
 require (
@@ -15,6 +17,6 @@ require (
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
 )
