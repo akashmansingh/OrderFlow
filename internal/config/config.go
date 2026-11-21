@@ -25,6 +25,12 @@ type Config struct {
 	JWTAccessTokenMinutes  int
 	JWTIssuer              string
 	JWTAudience            string
+	RedisAddress           string
+	RedisPassword          string
+	RedisTimeout           time.Duration
+	RateLimitLoginPerMinute int
+	RateLimitReservationPerMinute int
+	CacheSoldOutTTL        time.Duration
 }
 
 // Load reads configuration shared by the API and worker.
@@ -53,6 +59,22 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	redisTimeout, err := durationFromEnv("REDIS_TIMEOUT", time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	rateLimitLogin, err := positiveIntFromEnv("RATE_LIMIT_LOGIN_PER_MINUTE", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	rateLimitReservation, err := positiveIntFromEnv("RATE_LIMIT_RESERVATION_PER_MINUTE", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	soldOutTTL, err := durationFromEnv("CACHE_SOLD_OUT_TTL", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 
 	config := Config{
 		Environment:            valueOrDefault("APP_ENV", "development"),
@@ -69,6 +91,12 @@ func Load() (Config, error) {
 		JWTAccessTokenMinutes:  accessTokenMinutes,
 		JWTIssuer:              valueOrDefault("JWT_ISSUER", "orderflow"),
 		JWTAudience:            valueOrDefault("JWT_AUDIENCE", "orderflow-api"),
+		RedisAddress:           valueOrDefault("REDIS_ADDRESS", "127.0.0.1:6379"),
+		RedisPassword:          os.Getenv("REDIS_PASSWORD"),
+		RedisTimeout:           redisTimeout,
+		RateLimitLoginPerMinute: rateLimitLogin,
+		RateLimitReservationPerMinute: rateLimitReservation,
+		CacheSoldOutTTL:        soldOutTTL,
 	}
 
 	if config.DatabaseURL == "" {
