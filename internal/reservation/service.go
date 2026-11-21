@@ -53,13 +53,26 @@ type CreateReservationInput struct {
 	RequestHash    []byte
 }
 
+type inventoryCache interface {
+	IsSoldOut(ctx context.Context, eventID string) (bool, error)
+	MarkSoldOut(ctx context.Context, eventID string, ttl time.Duration) error
+}
+
 type Service struct {
 	database     *pgxpool.Pool
 	holdDuration time.Duration
+	cache        inventoryCache
+	soldOutTTL   time.Duration
 }
 
 func NewService(database *pgxpool.Pool, holdDuration time.Duration) *Service {
 	return &Service{database: database, holdDuration: holdDuration}
+}
+
+func (service *Service) WithCache(cache inventoryCache, ttl time.Duration) *Service {
+	service.cache = cache
+	service.soldOutTTL = ttl
+	return service
 }
 
 func (service *Service) CreateEvent(ctx context.Context, input CreateEventInput) (Event, error) {
@@ -100,6 +113,12 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 		return Reservation{}, fmt.Errorf("customer_id, positive quantity, idempotency key, and request hash are required")
 	}
 
+	if service.cache != nil {
+		if soldOut, _ := service.cache.IsSoldOut(ctx, input.EventID); soldOut {
+			return Reservation{}, ErrInsufficientInventory
+		}
+	}
+
 	tx, err := service.database.Begin(ctx)
 	if err != nil {
 		return Reservation{}, fmt.Errorf("begin reservation transaction: %w", err)
@@ -118,6 +137,9 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 	}
 
 	if err := reserveInventory(ctx, tx, input.EventID, input.Quantity); err != nil {
+		if errors.Is(err, ErrInsufficientInventory) && service.cache != nil && service.soldOutTTL > 0 {
+			_ = service.cache.MarkSoldOut(ctx, input.EventID, service.soldOutTTL)
+		}
 		return Reservation{}, err
 	}
 
