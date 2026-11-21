@@ -14,3 +14,10 @@ func TestExpiryRunOnceRequiresDatabase(t *testing.T) {
 		t.Fatalf("RunOnce() error = %v, want database requirement", err)
 	}
 }
+
+func TestExpiryWithCache(t *testing.T) {
+	expiry := workflow.NewExpiry(nil).WithCache(nil)
+	if expiry == nil {
+		t.Fatal("expected non-nil expiry")
+	}
+}
