@@ -183,6 +183,23 @@ func (service *Service) GetReservation(ctx context.Context, reservationID string
 	return reservation, err
 }
 
+// GetReservationForCustomer prevents one authenticated user from reading another user's reservation.
+// A forbidden reservation is reported as not found so ownership cannot be probed.
+func (service *Service) GetReservationForCustomer(ctx context.Context, reservationID, customerID string) (Reservation, error) {
+	if _, err := uuid.Parse(customerID); err != nil {
+		return Reservation{}, ErrReservationNotFound
+	}
+
+	reservation, err := service.GetReservation(ctx, reservationID)
+	if err != nil {
+		return Reservation{}, err
+	}
+	if reservation.CustomerID != customerID {
+		return Reservation{}, ErrReservationNotFound
+	}
+	return reservation, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

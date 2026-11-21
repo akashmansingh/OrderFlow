@@ -25,4 +25,6 @@ go test ./tests/e2e -v
 Remove-Item Env:ORDERFLOW_E2E_BASE_URL
 ```
 
-The suite creates isolated events and UUIDs. It checks API health, ticket reservation creation, idempotent retries, and capacity-based oversell rejection. Do not run it against a shared or production environment.
+The suite creates isolated users, events, and UUIDs. It checks API health, registration and login, short-lived token use, reservation ownership, ticket reservation creation, idempotent retries, and capacity-based oversell rejection. Do not run it against a shared or production environment.
+
+Unit tests cover password validation, bcrypt hashing, JWT claim verification, invalid credentials, duplicate registration, and bearer-token middleware without requiring a live stack.

@@ -23,6 +23,15 @@ Copy-Item .env.example .env
 
 `.env` is ignored by Git. Do not use the example passwords outside local development.
 
+Replace the JWT placeholder with a locally generated value before starting the API. The API requires at least 32 bytes and refuses to start without a valid secret:
+
+```powershell
+$jwtSecret = -join ((1..48) | ForEach-Object { '{0:X2}' -f (Get-Random -Maximum 256) })
+(Get-Content .env) -replace '^JWT_SECRET=.*', "JWT_SECRET=$jwtSecret" | Set-Content .env
+```
+
+Keep this value out of source control. Only the API container receives `JWT_SECRET`; the workflow worker does not need the signing key.
+
 ## Start PostgreSQL, pgAdmin, Redis, and Redpanda
 
 Start dependencies from the repository root:
@@ -93,3 +102,16 @@ docker compose logs --follow worker
 ```
 
 Use `SIMULATED_PAYMENT_RESULT=reject` in your local `.env` to demonstrate cancellation and inventory release. Keep the default `approve` for the normal flow.
+
+## Authenticate API requests
+
+Register and log in before calling event or reservation routes:
+
+```powershell
+$credentials = @{ email = "local@example.com"; password = "correct horse battery" } | ConvertTo-Json
+Invoke-RestMethod http://127.0.0.1:8080/v1/auth/register -Method Post -Body $credentials -ContentType "application/json"
+$token = (Invoke-RestMethod http://127.0.0.1:8080/v1/auth/login -Method Post -Body $credentials -ContentType "application/json").access_token
+$headers = @{ Authorization = "Bearer $token"; "Idempotency-Key" = [guid]::NewGuid().ToString() }
+```
+
+Pass `$headers` with protected requests. Reservation creation takes only `quantity`; the API derives `customer_id` from the token. Reservation status reads are limited to the token's user.
