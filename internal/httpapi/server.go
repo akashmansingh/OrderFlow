@@ -29,30 +29,44 @@ type authenticator interface {
 
 // Server exposes the HTTP interface for the reservation API.
 type Server struct {
-	database *pgxpool.Pool
-	service  reservationService
-	auth     authenticator
-	logger   *slog.Logger
-	handler  http.Handler
+	database         *pgxpool.Pool
+	service          reservationService
+	auth             authenticator
+	limiter          rateLimiter
+	loginLimit       int
+	reservationLimit int
+	logger           *slog.Logger
+	handler          http.Handler
 }
 
 // NewServer creates the API routes and middleware.
-func NewServer(database *pgxpool.Pool, service reservationService, authService authenticator, logger *slog.Logger) *Server {
+func NewServer(
+	database *pgxpool.Pool,
+	service reservationService,
+	authService authenticator,
+	limiter rateLimiter,
+	loginLimit int,
+	reservationLimit int,
+	logger *slog.Logger,
+) *Server {
 	server := &Server{
-		database: database,
-		service:  service,
-		auth:     authService,
-		logger:   logger,
+		database:         database,
+		service:          service,
+		auth:             authService,
+		limiter:          limiter,
+		loginLimit:       loginLimit,
+		reservationLimit: reservationLimit,
+		logger:           logger,
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
 	mux.HandleFunc("POST /v1/auth/register", server.register)
-	mux.HandleFunc("POST /v1/auth/login", server.login)
+	mux.Handle("POST /v1/auth/login", server.rateLimit(loginLimit, time.Minute, loginKey)(http.HandlerFunc(server.login)))
 	mux.Handle("POST /v1/events", server.requireAuth(http.HandlerFunc(server.createEvent)))
 	mux.Handle("GET /v1/events/{eventID}", server.requireAuth(http.HandlerFunc(server.getEvent)))
-	mux.Handle("POST /v1/events/{eventID}/reservations", server.requireAuth(http.HandlerFunc(server.createReservation)))
+	mux.Handle("POST /v1/events/{eventID}/reservations", server.requireAuth(server.rateLimit(reservationLimit, time.Minute, reservationKey)(http.HandlerFunc(server.createReservation))))
 	mux.Handle("GET /v1/reservations/{reservationID}", server.requireAuth(http.HandlerFunc(server.getReservation)))
 	server.handler = server.recoverPanics(server.logRequests(mux))
 
