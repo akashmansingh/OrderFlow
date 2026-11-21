@@ -18,6 +18,26 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
 
+  worker:
+    build:
+      context: .
+      args:
+        SERVICE: worker
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgres://orderflow:local-dev-password@postgres:5432/orderflow?sslmode=disable}
+      DATABASE_TIMEOUT: ${DATABASE_TIMEOUT:-5}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:9092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-reservation-events}
+      KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-orderflow-workflow-worker}
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-1}
+      SIMULATED_PAYMENT_RESULT: ${SIMULATED_PAYMENT_RESULT:-approve}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redpanda:
+        condition: service_started
+
   postgres:
     image: postgres:17-alpine
     environment:

@@ -10,6 +10,8 @@
 /dist/
 /api
 /api.exe
+/worker
+/worker.exe
 /coverage.out
 /coverage.html
 *.test

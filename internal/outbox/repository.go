@@ -1,0 +1,84 @@
+package outbox
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/theRiddler9/OrderFlow/internal/events"
+)
+
+// PostgresStore persists outbox state in PostgreSQL.
+type PostgresStore struct {
+	database *pgxpool.Pool
+	lease    time.Duration
+}
+
+func NewPostgresStore(database *pgxpool.Pool, lease time.Duration) *PostgresStore {
+	return &PostgresStore{database: database, lease: lease}
+}
+
+func (store *PostgresStore) ClaimNext(ctx context.Context) (events.Envelope, bool, error) {
+	const query = `
+		WITH candidate AS (
+			SELECT id
+			FROM outbox_events
+			WHERE published_at IS NULL
+				AND (locked_at IS NULL OR locked_at < NOW() - ($1 * INTERVAL '1 microsecond'))
+			ORDER BY occurred_at
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE outbox_events AS event
+		SET locked_at = NOW()
+		FROM candidate
+		WHERE event.id = candidate.id
+		RETURNING event.id, event.event_type, event.aggregate_id, event.occurred_at, event.payload`
+
+	var event events.Envelope
+	err := store.database.QueryRow(ctx, query, store.lease.Microseconds()).Scan(
+		&event.ID,
+		&event.Type,
+		&event.AggregateID,
+		&event.OccurredAt,
+		&event.Payload,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return events.Envelope{}, false, nil
+	}
+	if err != nil {
+		return events.Envelope{}, false, fmt.Errorf("claim outbox event: %w", err)
+	}
+	return event, true, nil
+}
+
+func (store *PostgresStore) MarkPublished(ctx context.Context, eventID string) error {
+	command, err := store.database.Exec(ctx,
+		`UPDATE outbox_events SET published_at = NOW(), locked_at = NULL WHERE id = $1 AND published_at IS NULL`,
+		eventID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark outbox event published: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("outbox event %s was not available to mark published", eventID)
+	}
+	return nil
+}
+
+func (store *PostgresStore) RecordPublishFailure(ctx context.Context, eventID string) error {
+	command, err := store.database.Exec(ctx,
+		`UPDATE outbox_events SET publish_attempts = publish_attempts + 1, locked_at = NULL WHERE id = $1 AND published_at IS NULL`,
+		eventID,
+	)
+	if err != nil {
+		return fmt.Errorf("record outbox publish failure: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("outbox event %s was not available to record failure", eventID)
+	}
+	return nil
+}

@@ -81,3 +81,15 @@ docker compose down --volumes
 ```
 
 Use the volume-removal command only when you intend to reset this project's local data.
+
+## Workflow worker
+
+The Compose stack starts the worker after database migrations. It relays committed PostgreSQL outbox records to the `reservation-events` Redpanda topic, then processes held reservations asynchronously.
+
+Inspect worker activity with:
+
+```powershell
+docker compose logs --follow worker
+```
+
+Use `SIMULATED_PAYMENT_RESULT=reject` in your local `.env` to demonstrate cancellation and inventory release. Keep the default `approve` for the normal flow.

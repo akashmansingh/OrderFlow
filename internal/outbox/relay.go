@@ -1,0 +1,71 @@
+package outbox
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/theRiddler9/OrderFlow/internal/events"
+)
+
+// Publisher publishes an outbox event to the configured message broker.
+type Publisher interface {
+	Publish(context.Context, events.Envelope) error
+}
+
+// Store provides durable outbox state transitions.
+type Store interface {
+	ClaimNext(context.Context) (events.Envelope, bool, error)
+	MarkPublished(context.Context, string) error
+	RecordPublishFailure(context.Context, string) error
+}
+
+// Relay moves committed database events to the message broker.
+type Relay struct {
+	store        Store
+	publisher    Publisher
+	pollInterval time.Duration
+}
+
+func NewRelay(store Store, publisher Publisher, pollInterval time.Duration) *Relay {
+	return &Relay{store: store, publisher: publisher, pollInterval: pollInterval}
+}
+
+// Run polls until its context is cancelled.
+func (relay *Relay) Run(ctx context.Context) error {
+	ticker := time.NewTicker(relay.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if err := relay.RunOnce(ctx); err != nil {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// RunOnce claims and publishes at most one outbox event.
+func (relay *Relay) RunOnce(ctx context.Context) error {
+	event, found, err := relay.store.ClaimNext(ctx)
+	if err != nil || !found {
+		return err
+	}
+
+	if err := relay.publisher.Publish(ctx, event); err != nil {
+		if recordErr := relay.store.RecordPublishFailure(ctx, event.ID); recordErr != nil {
+			return fmt.Errorf("publish event %s: %w; record failure: %v", event.ID, err, recordErr)
+		}
+		return fmt.Errorf("publish event %s: %w", event.ID, err)
+	}
+
+	if err := relay.store.MarkPublished(ctx, event.ID); err != nil {
+		return fmt.Errorf("mark event %s published: %w", event.ID, err)
+	}
+
+	return nil
+}
