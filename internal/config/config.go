@@ -11,26 +11,26 @@ import (
 
 // Config contains process configuration supplied by the environment.
 type Config struct {
-	Environment            string
-	HTTPAddress            string
-	DatabaseURL            string
-	DatabaseTimeout        time.Duration
-	ReservationHold        time.Duration
-	KafkaBrokers           []string
-	KafkaTopic             string
-	KafkaGroupID           string
-	WorkerPollInterval     time.Duration
-	SimulatedPaymentResult string
-	JWTSecret              string
-	JWTAccessTokenMinutes  int
-	JWTIssuer              string
-	JWTAudience            string
-	RedisAddress           string
-	RedisPassword          string
-	RedisTimeout           time.Duration
-	RateLimitLoginPerMinute int
+	Environment                   string
+	HTTPAddress                   string
+	DatabaseURL                   string
+	DatabaseTimeout               time.Duration
+	ReservationHold               time.Duration
+	KafkaBrokers                  []string
+	KafkaTopic                    string
+	KafkaGroupID                  string
+	WorkerPollInterval            time.Duration
+	SimulatedPaymentResult        string
+	JWTSecret                     string
+	JWTAccessTokenMinutes         int
+	JWTIssuer                     string
+	JWTAudience                   string
+	RedisAddress                  string
+	RedisPassword                 string
+	RedisTimeout                  time.Duration
+	RateLimitLoginPerMinute       int
 	RateLimitReservationPerMinute int
-	CacheSoldOutTTL        time.Duration
+	CacheSoldOutTTL               time.Duration
 }
 
 // Load reads configuration shared by the API and worker.
@@ -77,26 +77,26 @@ func Load() (Config, error) {
 	}
 
 	config := Config{
-		Environment:            valueOrDefault("APP_ENV", "development"),
-		HTTPAddress:            valueOrDefault("HTTP_ADDRESS", ":8080"),
-		DatabaseURL:            os.Getenv("DATABASE_URL"),
-		DatabaseTimeout:        timeout,
-		ReservationHold:        holdDuration,
-		KafkaBrokers:           brokers,
-		KafkaTopic:             valueOrDefault("KAFKA_TOPIC", "reservation-events"),
-		KafkaGroupID:           valueOrDefault("KAFKA_GROUP_ID", "orderflow-workflow-worker"),
-		WorkerPollInterval:     pollInterval,
-		SimulatedPaymentResult: paymentResult,
-		JWTSecret:              os.Getenv("JWT_SECRET"),
-		JWTAccessTokenMinutes:  accessTokenMinutes,
-		JWTIssuer:              valueOrDefault("JWT_ISSUER", "orderflow"),
-		JWTAudience:            valueOrDefault("JWT_AUDIENCE", "orderflow-api"),
-		RedisAddress:           valueOrDefault("REDIS_ADDRESS", "127.0.0.1:6379"),
-		RedisPassword:          os.Getenv("REDIS_PASSWORD"),
-		RedisTimeout:           redisTimeout,
-		RateLimitLoginPerMinute: rateLimitLogin,
+		Environment:                   valueOrDefault("APP_ENV", "development"),
+		HTTPAddress:                   valueOrDefault("HTTP_ADDRESS", ":8080"),
+		DatabaseURL:                   os.Getenv("DATABASE_URL"),
+		DatabaseTimeout:               timeout,
+		ReservationHold:               holdDuration,
+		KafkaBrokers:                  brokers,
+		KafkaTopic:                    valueOrDefault("KAFKA_TOPIC", "reservation-events"),
+		KafkaGroupID:                  valueOrDefault("KAFKA_GROUP_ID", "orderflow-workflow-worker"),
+		WorkerPollInterval:            pollInterval,
+		SimulatedPaymentResult:        paymentResult,
+		JWTSecret:                     os.Getenv("JWT_SECRET"),
+		JWTAccessTokenMinutes:         accessTokenMinutes,
+		JWTIssuer:                     valueOrDefault("JWT_ISSUER", "orderflow"),
+		JWTAudience:                   valueOrDefault("JWT_AUDIENCE", "orderflow-api"),
+		RedisAddress:                  valueOrDefault("REDIS_ADDRESS", "127.0.0.1:6379"),
+		RedisPassword:                 os.Getenv("REDIS_PASSWORD"),
+		RedisTimeout:                  redisTimeout,
+		RateLimitLoginPerMinute:       rateLimitLogin,
 		RateLimitReservationPerMinute: rateLimitReservation,
-		CacheSoldOutTTL:        soldOutTTL,
+		CacheSoldOutTTL:               soldOutTTL,
 	}
 
 	if config.DatabaseURL == "" {

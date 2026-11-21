@@ -10,9 +10,9 @@ import (
 )
 
 type stubCache struct {
-	soldOutEvents   map[string]bool
-	markedEvents    map[string]time.Duration
-	clearedEvents   []string
+	soldOutEvents map[string]bool
+	markedEvents  map[string]time.Duration
+	clearedEvents []string
 }
 
 func newStubCache() *stubCache {
