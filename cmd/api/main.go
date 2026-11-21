@@ -63,6 +63,7 @@ func run(logger *slog.Logger) error {
 		} else {
 			redisClient = rc
 			defer redisClient.Close()
+			reservationService.WithCache(redisClient, configuration.CacheSoldOutTTL)
 		}
 	}
 
