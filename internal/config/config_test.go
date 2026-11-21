@@ -18,6 +18,12 @@ func TestLoadDefaultsWorkerConfiguration(t *testing.T) {
 	t.Setenv("JWT_ACCESS_TOKEN_MINUTES", "")
 	t.Setenv("JWT_ISSUER", "")
 	t.Setenv("JWT_AUDIENCE", "")
+	t.Setenv("REDIS_ADDRESS", "")
+	t.Setenv("REDIS_PASSWORD", "")
+	t.Setenv("REDIS_TIMEOUT", "")
+	t.Setenv("RATE_LIMIT_LOGIN_PER_MINUTE", "")
+	t.Setenv("RATE_LIMIT_RESERVATION_PER_MINUTE", "")
+	t.Setenv("CACHE_SOLD_OUT_TTL", "")
 
 	loaded, err := config.Load()
 	if err != nil {
@@ -46,6 +52,57 @@ func TestLoadDefaultsWorkerConfiguration(t *testing.T) {
 	}
 	if loaded.JWTAudience != "orderflow-api" {
 		t.Fatalf("JWTAudience = %q, want orderflow-api", loaded.JWTAudience)
+	}
+	if loaded.RedisAddress != "127.0.0.1:6379" {
+		t.Fatalf("RedisAddress = %q, want 127.0.0.1:6379", loaded.RedisAddress)
+	}
+	if loaded.RedisPassword != "" {
+		t.Fatalf("RedisPassword = %q, want empty", loaded.RedisPassword)
+	}
+	if loaded.RedisTimeout != time.Second {
+		t.Fatalf("RedisTimeout = %s, want 1s", loaded.RedisTimeout)
+	}
+	if loaded.RateLimitLoginPerMinute != 5 {
+		t.Fatalf("RateLimitLoginPerMinute = %d, want 5", loaded.RateLimitLoginPerMinute)
+	}
+	if loaded.RateLimitReservationPerMinute != 10 {
+		t.Fatalf("RateLimitReservationPerMinute = %d, want 10", loaded.RateLimitReservationPerMinute)
+	}
+	if loaded.CacheSoldOutTTL != 5*time.Second {
+		t.Fatalf("CacheSoldOutTTL = %s, want 5s", loaded.CacheSoldOutTTL)
+	}
+}
+
+func TestLoadRedisCustomConfiguration(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
+	t.Setenv("REDIS_ADDRESS", "redis.internal:6380")
+	t.Setenv("REDIS_PASSWORD", "secret-password")
+	t.Setenv("REDIS_TIMEOUT", "2")
+	t.Setenv("RATE_LIMIT_LOGIN_PER_MINUTE", "15")
+	t.Setenv("RATE_LIMIT_RESERVATION_PER_MINUTE", "30")
+	t.Setenv("CACHE_SOLD_OUT_TTL", "10")
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.RedisAddress != "redis.internal:6380" {
+		t.Fatalf("RedisAddress = %q, want redis.internal:6380", loaded.RedisAddress)
+	}
+	if loaded.RedisPassword != "secret-password" {
+		t.Fatalf("RedisPassword = %q, want secret-password", loaded.RedisPassword)
+	}
+	if loaded.RedisTimeout != 2*time.Second {
+		t.Fatalf("RedisTimeout = %s, want 2s", loaded.RedisTimeout)
+	}
+	if loaded.RateLimitLoginPerMinute != 15 {
+		t.Fatalf("RateLimitLoginPerMinute = %d, want 15", loaded.RateLimitLoginPerMinute)
+	}
+	if loaded.RateLimitReservationPerMinute != 30 {
+		t.Fatalf("RateLimitReservationPerMinute = %d, want 30", loaded.RateLimitReservationPerMinute)
+	}
+	if loaded.CacheSoldOutTTL != 10*time.Second {
+		t.Fatalf("CacheSoldOutTTL = %s, want 10s", loaded.CacheSoldOutTTL)
 	}
 }
 
