@@ -29,6 +29,31 @@ type offsetCommitter interface {
 	CommitRecords(context.Context, ...*kgo.Record) error
 }
 
+type dlqPublisher interface {
+	PublishDLQ(ctx context.Context, originalRecord []byte, reason string, retryCount int) error
+}
+
+type KafkaDLQPublisher struct {
+	client *kgo.Client
+	topic  string
+}
+
+func NewKafkaDLQPublisher(client *kgo.Client, topic string) *KafkaDLQPublisher {
+	return &KafkaDLQPublisher{client: client, topic: topic}
+}
+
+func (p *KafkaDLQPublisher) PublishDLQ(ctx context.Context, originalRecord []byte, reason string, retryCount int) error {
+	envelope, err := workflow.FormatDLQEnvelope(originalRecord, reason, retryCount)
+	if err != nil {
+		return err
+	}
+	record := &kgo.Record{
+		Topic: p.topic,
+		Value: envelope,
+	}
+	return p.client.ProduceSync(ctx, record).FirstErr()
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
@@ -90,13 +115,15 @@ func run(logger *slog.Logger) error {
 	go runExpiry(ctx, logger, expiry, configuration.WorkerPollInterval)
 	logger.Info("worker started", "topic", configuration.KafkaTopic, "group", configuration.KafkaGroupID)
 
+	dlqPublisher := NewKafkaDLQPublisher(producerClient, configuration.KafkaTopic+"-dlq")
+
 	for ctx.Err() == nil {
 		fetches := consumer.PollFetches(ctx)
 		if errs := fetches.Errors(); len(errs) > 0 {
 			return fmt.Errorf("poll Kafka: %w", errs[0].Err)
 		}
 		fetches.EachRecord(func(record *kgo.Record) {
-			if err := handleRecord(ctx, processor, consumer, record); err != nil {
+			if err := handleRecord(ctx, processor, consumer, dlqPublisher, metricsCollector, logger, record); err != nil {
 				logger.Error("handle Kafka record", "error", err)
 			}
 		})
@@ -104,14 +131,64 @@ func run(logger *slog.Logger) error {
 	return nil
 }
 
-func handleRecord(ctx context.Context, handler eventHandler, committer offsetCommitter, record *kgo.Record) error {
+func handleRecord(
+	ctx context.Context,
+	handler eventHandler,
+	committer offsetCommitter,
+	dlq dlqPublisher,
+	m *metrics.Metrics,
+	logger *slog.Logger,
+	record *kgo.Record,
+) error {
 	event, err := events.ParseEnvelope(record.Value)
 	if err != nil {
-		return err
+		if logger != nil {
+			logger.Warn("poison record detected, routing to DLQ", "error", err)
+		}
+		if dlq != nil {
+			_ = dlq.PublishDLQ(ctx, record.Value, err.Error(), 0)
+		}
+		if m != nil {
+			m.WorkerDLQEventsTotal.WithLabelValues("poison").Inc()
+		}
+		return committer.CommitRecords(ctx, record)
 	}
-	if err := handler.Handle(ctx, event); err != nil {
-		return err
+
+	const maxRetries = 3
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			if m != nil {
+				m.WorkerRetriesTotal.WithLabelValues(event.Type).Inc()
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt*10) * time.Millisecond):
+			}
+		}
+
+		err = handler.Handle(ctx, event)
+		if err == nil {
+			return committer.CommitRecords(ctx, record)
+		}
+
+		lastErr = err
+		if workflow.IsPoisonError(err) {
+			break
+		}
 	}
+
+	if logger != nil {
+		logger.Error("message handling failed, forwarding to DLQ", "event_id", event.ID, "error", lastErr)
+	}
+	if dlq != nil {
+		_ = dlq.PublishDLQ(ctx, record.Value, lastErr.Error(), maxRetries)
+	}
+	if m != nil {
+		m.WorkerDLQEventsTotal.WithLabelValues(event.Type).Inc()
+	}
+
 	return committer.CommitRecords(ctx, record)
 }
 
