@@ -35,9 +35,17 @@ func TestParseHeldReservationPayload(t *testing.T) {
 
 func TestProcessorAcknowledgesTerminalEventWithoutDatabaseWork(t *testing.T) {
 	processor := workflow.NewProcessor(nil, "approve")
-	err := processor.Handle(context.Background(), events.Envelope{Type: "reservation.confirmed.v1"})
-	if err != nil {
-		t.Fatalf("Handle() error = %v", err)
+	terminalTypes := []string{
+		"reservation.confirmed.v1",
+		"reservation.cancelled.v1",
+		"reservation.expired.v1",
+	}
+
+	for _, eventType := range terminalTypes {
+		err := processor.Handle(context.Background(), events.Envelope{Type: eventType})
+		if err != nil {
+			t.Fatalf("Handle(%s) error = %v, want nil for terminal event", eventType, err)
+		}
 	}
 }
 

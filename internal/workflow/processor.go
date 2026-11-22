@@ -92,7 +92,7 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 	}
 
 	now := time.Now().UTC()
-	finalStatus, reason := paymentApprove, ""
+	finalStatus, reason := "confirmed", ""
 	if expiresAt == nil || !expiresAt.After(now) {
 		finalStatus, reason = "expired", "hold_expired"
 	} else if processor.paymentResult == paymentReject {
@@ -112,7 +112,7 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 }
 
 func transitionReservation(ctx context.Context, tx pgx.Tx, payload HeldReservation, status, reason string) error {
-	if status == paymentApprove {
+	if status == "confirmed" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE events
 			SET held_quantity = held_quantity - $2,
