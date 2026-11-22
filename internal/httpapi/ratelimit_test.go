@@ -284,3 +284,32 @@ func (s *stubRes) CreateReservation(ctx context.Context, in reservation.CreateRe
 func (s *stubRes) GetReservationForCustomer(ctx context.Context, resID, custID string) (reservation.Reservation, error) {
 	return reservation.Reservation{ID: resID, CustomerID: custID}, nil
 }
+
+func TestRateLimitingDisabledByFlag(t *testing.T) {
+	server := miniredis.RunT(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	redisClient, err := cache.New(server.Addr(), "", time.Second, logger)
+	if err != nil {
+		t.Fatalf("cache.New() error = %v", err)
+	}
+	defer redisClient.Close()
+
+	authenticator := newStubAuthenticator()
+	apiServer := httpapi.NewServer(nil, nil, authenticator, redisClient, 2, 5, logger).
+		WithRateLimitEnabled(false)
+	handler := apiServer.Handler()
+
+	body := `{"email":"test@example.com","password":"valid-password-123"}`
+
+	// Execute 3 requests; all must return 200 because rate limiting is disabled
+	for i := 1; i <= 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(body))
+		req.RemoteAddr = "192.168.1.100:1234"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("req %d status = %d, want 200 when rate limiting is disabled", i, rec.Code)
+		}
+	}
+}

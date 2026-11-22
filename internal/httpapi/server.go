@@ -39,6 +39,7 @@ type Server struct {
 	limiter          rateLimiter
 	loginLimit       int
 	reservationLimit int
+	rateLimitEnabled bool
 	logger           *slog.Logger
 	metrics          *metrics.Metrics
 	handler          http.Handler
@@ -61,9 +62,17 @@ func NewServer(
 		limiter:          limiter,
 		loginLimit:       loginLimit,
 		reservationLimit: reservationLimit,
+		rateLimitEnabled: true,
 		logger:           logger,
 	}
 
+	server.buildRoutes()
+	return server
+}
+
+// WithRateLimitEnabled configures whether rate limiting middleware is enforced.
+func (server *Server) WithRateLimitEnabled(enabled bool) *Server {
+	server.rateLimitEnabled = enabled
 	server.buildRoutes()
 	return server
 }

@@ -83,6 +83,34 @@ func TestCreateReservationFastPathRejectsSoldOutEvent(t *testing.T) {
 	}
 }
 
+func TestCreateReservationFastPathDisabledByFlag(t *testing.T) {
+	cache := newStubCache()
+	eventID := "11111111-1111-1111-1111-111111111111"
+	cache.soldOutEvents[eventID] = true
+
+	// With SoldOutFastPath disabled, fast-path check is bypassed, proceeding to DB.
+	// Since databasePool is nil, it will panic on Begin rather than immediately returning ErrInsufficientInventory.
+	svc := reservation.NewService(nil, 10*time.Minute).
+		WithCache(cache, 5*time.Second).
+		WithFeatureFlags(true, false)
+
+	input := reservation.CreateReservationInput{
+		EventID:        eventID,
+		CustomerID:     "22222222-2222-2222-2222-222222222222",
+		Quantity:       1,
+		IdempotencyKey: "idemp-test",
+		RequestHash:    []byte("hash"),
+	}
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected nil database pool panic when fast path is disabled, but call succeeded or failed without DB call")
+		}
+	}()
+
+	_, _ = svc.CreateReservation(context.Background(), input)
+}
+
 func TestSingleflightDeduplicatesConcurrentSoldOutChecks(t *testing.T) {
 	var checkCount atomic.Int64
 	cache := newStubCache()

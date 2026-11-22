@@ -18,7 +18,7 @@ type rateLimiter interface {
 func (server *Server) rateLimit(limit int, window time.Duration, keyFunc func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			if server.limiter == nil || limit <= 0 {
+			if !server.rateLimitEnabled || server.limiter == nil || limit <= 0 {
 				next.ServeHTTP(response, request)
 				return
 			}
