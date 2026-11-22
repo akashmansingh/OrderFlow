@@ -18,7 +18,7 @@ type Client struct {
 	timeout time.Duration
 }
 
-// New creates and tests a Redis client connection.
+// New creates and tests a Redis client connection with tuned pool settings.
 func New(address, password string, timeout time.Duration, logger *slog.Logger) (*Client, error) {
 	if timeout <= 0 {
 		timeout = time.Second
@@ -27,7 +27,10 @@ func New(address, password string, timeout time.Duration, logger *slog.Logger) (
 		Addr:         address,
 		Password:     password,
 		DB:           0,
-		DialTimeout:  timeout,
+		PoolSize:     50,
+		MinIdleConns: 10,
+		MaxRetries:   1,
+		DialTimeout:  500 * time.Millisecond,
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
 	})
@@ -102,56 +105,77 @@ func (c *Client) ClearSoldOut(ctx context.Context, eventID string) error {
 	return nil
 }
 
-// Allow executes a sliding-window rate limit check for a key.
+var slidingWindowRateLimitScript = redis.NewScript(`
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+
+local clearBefore = now - window
+redis.call('ZREMRANGEBYSCORE', key, '-inf', clearBefore)
+
+local count = redis.call('ZCARD', key)
+
+if count >= limit then
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    local retryAfter = 0
+    if oldest and #oldest >= 2 then
+        local oldestScore = tonumber(oldest[2])
+        local elapsed = now - oldestScore
+        retryAfter = window - elapsed
+        if retryAfter <= 0 then
+            retryAfter = 1000
+        end
+    else
+        retryAfter = window
+    end
+    return {0, 0, retryAfter}
+end
+
+redis.call('ZADD', key, now, member)
+local ttlSeconds = math.ceil(window / 1000)
+redis.call('EXPIRE', key, ttlSeconds)
+
+local remaining = limit - count - 1
+if remaining < 0 then
+    remaining = 0
+end
+
+return {1, remaining, 0}
+`)
+
+// Allow executes an atomic sliding-window rate limit check using a server-side Lua script.
 // On Redis errors, it fails open: returns allowed=true and logs a warning.
 func (c *Client) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, int, time.Duration, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	now := time.Now().UTC()
-	nowMs := float64(now.UnixMilli())
-	windowMs := float64(window.Milliseconds())
-	clearBefore := nowMs - windowMs
+	nowMs := now.UnixMilli()
+	windowMs := window.Milliseconds()
 	member := uuid.New().String()
 
-	pipe := c.rdb.TxPipeline()
-	pipe.ZRemRangeByScore(timeoutCtx, key, "-inf", fmt.Sprintf("%f", clearBefore))
-	countCmd := pipe.ZCard(timeoutCtx, key)
-	oldestCmd := pipe.ZRangeWithScores(timeoutCtx, key, 0, 0)
-	pipe.Expire(timeoutCtx, key, window)
-	_, err := pipe.Exec(timeoutCtx)
+	res, err := slidingWindowRateLimitScript.Run(
+		timeoutCtx,
+		c.rdb,
+		[]string{key},
+		nowMs,
+		windowMs,
+		limit,
+		member,
+	).Slice()
 	if err != nil {
-		c.logger.Warn("redis rate limiter failed, failing open", "key", key, "error", err)
+		c.logger.Warn("redis rate limiter script failed, failing open", "key", key, "error", err)
 		return true, limit, 0, err
 	}
 
-	count := countCmd.Val()
-	if count >= int64(limit) {
-		oldest := oldestCmd.Val()
-		var retryAfter time.Duration
-		if len(oldest) > 0 {
-			elapsed := time.Duration(nowMs-oldest[0].Score) * time.Millisecond
-			retryAfter = window - elapsed
-			if retryAfter <= 0 {
-				retryAfter = time.Second
-			}
-		} else {
-			retryAfter = window
-		}
-		return false, 0, retryAfter, nil
-	}
+	allowedVal, _ := res[0].(int64)
+	remainingVal, _ := res[1].(int64)
+	retryAfterMsVal, _ := res[2].(int64)
 
-	pipe2 := c.rdb.TxPipeline()
-	pipe2.ZAdd(timeoutCtx, key, redis.Z{Score: nowMs, Member: member})
-	pipe2.Expire(timeoutCtx, key, window)
-	if _, err := pipe2.Exec(timeoutCtx); err != nil {
-		c.logger.Warn("redis rate limiter add entry failed, failing open", "key", key, "error", err)
-		return true, limit - int(count), 0, err
-	}
-
-	remaining := limit - int(count) - 1
-	if remaining < 0 {
-		remaining = 0
-	}
-	return true, remaining, 0, nil
+	allowed := allowedVal == 1
+	remaining := int(remainingVal)
+	retryAfter := time.Duration(retryAfterMsVal) * time.Millisecond
+	return allowed, remaining, retryAfter, nil
 }
