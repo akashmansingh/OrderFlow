@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/theRiddler9/OrderFlow/internal/metrics"
 )
 
 // Client wraps a Redis client for rate limiting and inventory caching.
@@ -16,6 +17,7 @@ type Client struct {
 	rdb     *redis.Client
 	logger  *slog.Logger
 	timeout time.Duration
+	metrics *metrics.Metrics
 }
 
 // New creates and tests a Redis client connection with tuned pool settings.
@@ -53,6 +55,12 @@ func New(address, password string, timeout time.Duration, logger *slog.Logger) (
 	}, nil
 }
 
+// WithMetrics attaches a Prometheus metrics collector to the Redis client.
+func (c *Client) WithMetrics(m *metrics.Metrics) *Client {
+	c.metrics = m
+	return c
+}
+
 // Close terminates the underlying Redis connections.
 func (c *Client) Close() error {
 	return c.rdb.Close()
@@ -74,12 +82,27 @@ func (c *Client) IsSoldOut(ctx context.Context, eventID string) (bool, error) {
 	val, err := c.rdb.Get(timeoutCtx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
+			if c.metrics != nil {
+				c.metrics.RedisCacheMissesTotal.WithLabelValues("sold_out").Inc()
+			}
 			return false, nil
+		}
+		if c.metrics != nil {
+			c.metrics.RedisFailOpenTotal.WithLabelValues("is_sold_out").Inc()
 		}
 		c.logger.Warn("redis error on sold out check, falling back to database", "event_id", eventID, "error", err)
 		return false, err
 	}
-	return val == "1", nil
+	if val == "1" {
+		if c.metrics != nil {
+			c.metrics.RedisCacheHitsTotal.WithLabelValues("sold_out").Inc()
+		}
+		return true, nil
+	}
+	if c.metrics != nil {
+		c.metrics.RedisCacheMissesTotal.WithLabelValues("sold_out").Inc()
+	}
+	return false, nil
 }
 
 // MarkSoldOut caches an event as sold out for the specified duration.
@@ -169,11 +192,17 @@ func (c *Client) Allow(ctx context.Context, key string, limit int, window time.D
 		member,
 	).Slice()
 	if err != nil {
+		if c.metrics != nil {
+			c.metrics.RedisFailOpenTotal.WithLabelValues("ratelimit").Inc()
+		}
 		c.logger.Warn("redis rate limiter script failed, failing open", "key", key, "error", err)
 		return true, limit, 0, err
 	}
 
 	if len(res) < 3 {
+		if c.metrics != nil {
+			c.metrics.RedisFailOpenTotal.WithLabelValues("ratelimit").Inc()
+		}
 		c.logger.Warn("redis rate limiter script returned invalid result", "key", key, "result", res)
 		return true, limit, 0, fmt.Errorf("unexpected script result length: %d", len(res))
 	}

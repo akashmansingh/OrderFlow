@@ -5,12 +5,14 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/theRiddler9/OrderFlow/internal/metrics"
 )
 
 // Expiry releases inventory held by reservations whose hold has elapsed.
 type Expiry struct {
 	database *pgxpool.Pool
 	cache    inventoryCache
+	metrics  *metrics.Metrics
 }
 
 func NewExpiry(database *pgxpool.Pool) *Expiry {
@@ -19,6 +21,12 @@ func NewExpiry(database *pgxpool.Pool) *Expiry {
 
 func (expiry *Expiry) WithCache(cache inventoryCache) *Expiry {
 	expiry.cache = cache
+	return expiry
+}
+
+// WithMetrics attaches a Prometheus metrics collector to the expiry sweeper.
+func (expiry *Expiry) WithMetrics(m *metrics.Metrics) *Expiry {
+	expiry.metrics = m
 	return expiry
 }
 
@@ -66,6 +74,9 @@ func (expiry *Expiry) RunOnce(ctx context.Context) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit expiry transaction: %w", err)
+	}
+	if expiry.metrics != nil && len(expired) > 0 {
+		expiry.metrics.WorkerEventsProcessedTotal.WithLabelValues("reservation.held.v1", "expired").Add(float64(len(expired)))
 	}
 	if expiry.cache != nil {
 		cleared := make(map[string]struct{}, len(expired))

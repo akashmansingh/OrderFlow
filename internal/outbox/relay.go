@@ -6,11 +6,17 @@ import (
 	"time"
 
 	"github.com/theRiddler9/OrderFlow/internal/events"
+	"github.com/theRiddler9/OrderFlow/internal/metrics"
 )
 
 // Publisher publishes an outbox event to the configured message broker.
 type Publisher interface {
 	Publish(context.Context, events.Envelope) error
+}
+
+// BacklogReporter reports the number of pending outbox records.
+type BacklogReporter interface {
+	CountPending(context.Context) (int64, error)
 }
 
 // Store provides durable outbox state transitions.
@@ -25,10 +31,17 @@ type Relay struct {
 	store        Store
 	publisher    Publisher
 	pollInterval time.Duration
+	metrics      *metrics.Metrics
 }
 
 func NewRelay(store Store, publisher Publisher, pollInterval time.Duration) *Relay {
 	return &Relay{store: store, publisher: publisher, pollInterval: pollInterval}
+}
+
+// WithMetrics attaches a Prometheus metrics collector to the relay.
+func (relay *Relay) WithMetrics(m *metrics.Metrics) *Relay {
+	relay.metrics = m
+	return relay
 }
 
 // Run polls until its context is cancelled.
@@ -51,6 +64,12 @@ func (relay *Relay) Run(ctx context.Context) error {
 
 // RunOnce claims and publishes at most one outbox event.
 func (relay *Relay) RunOnce(ctx context.Context) error {
+	if reporter, ok := relay.store.(BacklogReporter); ok && relay.metrics != nil {
+		if count, countErr := reporter.CountPending(ctx); countErr == nil {
+			relay.metrics.OutboxBacklogRecords.Set(float64(count))
+		}
+	}
+
 	event, found, err := relay.store.ClaimNext(ctx)
 	if err != nil || !found {
 		return err

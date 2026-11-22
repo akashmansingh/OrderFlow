@@ -15,6 +15,7 @@ import (
 	"github.com/theRiddler9/OrderFlow/internal/database"
 	"github.com/theRiddler9/OrderFlow/internal/events"
 	"github.com/theRiddler9/OrderFlow/internal/messaging"
+	"github.com/theRiddler9/OrderFlow/internal/metrics"
 	"github.com/theRiddler9/OrderFlow/internal/outbox"
 	"github.com/theRiddler9/OrderFlow/internal/workflow"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -55,10 +56,12 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer producerClient.Close()
+	metricsCollector := metrics.New(nil)
+
 	publisher := messaging.NewPublisher(producerClient, configuration.KafkaTopic)
-	relay := outbox.NewRelay(outbox.NewPostgresStore(databasePool, 30*time.Second), publisher, configuration.WorkerPollInterval)
-	processor := workflow.NewProcessor(databasePool, configuration.SimulatedPaymentResult)
-	expiry := workflow.NewExpiry(databasePool)
+	relay := outbox.NewRelay(outbox.NewPostgresStore(databasePool, 30*time.Second), publisher, configuration.WorkerPollInterval).WithMetrics(metricsCollector)
+	processor := workflow.NewProcessor(databasePool, configuration.SimulatedPaymentResult).WithMetrics(metricsCollector)
+	expiry := workflow.NewExpiry(databasePool).WithMetrics(metricsCollector)
 
 	if configuration.RedisAddress != "" {
 		rc, err := cache.New(configuration.RedisAddress, configuration.RedisPassword, configuration.RedisTimeout, logger)
@@ -66,6 +69,7 @@ func run(logger *slog.Logger) error {
 			logger.Warn("redis connection unavailable, worker cache invalidation disabled", "error", err)
 		} else {
 			defer rc.Close()
+			rc.WithMetrics(metricsCollector)
 			processor.WithCache(rc)
 			expiry.WithCache(rc)
 		}
