@@ -59,7 +59,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	redisTimeout, err := durationFromEnv("REDIS_TIMEOUT", time.Second)
+	redisTimeout, err := redisTimeoutFromEnv(50 * time.Millisecond)
 	if err != nil {
 		return Config{}, err
 	}
@@ -163,6 +163,26 @@ func positiveIntFromEnv(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be a positive integer", key)
 	}
 	return parsed, nil
+}
+
+func redisTimeoutFromEnv(fallback time.Duration) (time.Duration, error) {
+	if value := os.Getenv("REDIS_TIMEOUT_MS"); value != "" {
+		ms, err := strconv.Atoi(value)
+		if err != nil || ms <= 0 {
+			return 0, fmt.Errorf("REDIS_TIMEOUT_MS must be a positive number of milliseconds")
+		}
+		return time.Duration(ms) * time.Millisecond, nil
+	}
+
+	if value := os.Getenv("REDIS_TIMEOUT"); value != "" {
+		seconds, err := strconv.Atoi(value)
+		if err != nil || seconds <= 0 {
+			return 0, fmt.Errorf("REDIS_TIMEOUT must be a positive number of seconds")
+		}
+		return time.Duration(seconds) * time.Second, nil
+	}
+
+	return fallback, nil
 }
 
 func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) {

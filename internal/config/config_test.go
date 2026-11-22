@@ -59,8 +59,8 @@ func TestLoadDefaultsWorkerConfiguration(t *testing.T) {
 	if loaded.RedisPassword != "" {
 		t.Fatalf("RedisPassword = %q, want empty", loaded.RedisPassword)
 	}
-	if loaded.RedisTimeout != time.Second {
-		t.Fatalf("RedisTimeout = %s, want 1s", loaded.RedisTimeout)
+	if loaded.RedisTimeout != 50*time.Millisecond {
+		t.Fatalf("RedisTimeout = %s, want 50ms", loaded.RedisTimeout)
 	}
 	if loaded.RateLimitLoginPerMinute != 5 {
 		t.Fatalf("RateLimitLoginPerMinute = %d, want 5", loaded.RateLimitLoginPerMinute)
