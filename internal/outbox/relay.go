@@ -14,9 +14,9 @@ type Publisher interface {
 	Publish(context.Context, events.Envelope) error
 }
 
-// BacklogReporter reports the number of pending outbox records.
+// BacklogReporter reports the number and oldest age of pending outbox records.
 type BacklogReporter interface {
-	CountPending(context.Context) (int64, error)
+	ReportBacklog(context.Context) (int64, float64, error)
 }
 
 // Store provides durable outbox state transitions.
@@ -65,8 +65,9 @@ func (relay *Relay) Run(ctx context.Context) error {
 // RunOnce claims and publishes at most one outbox event.
 func (relay *Relay) RunOnce(ctx context.Context) error {
 	if reporter, ok := relay.store.(BacklogReporter); ok && relay.metrics != nil {
-		if count, countErr := reporter.CountPending(ctx); countErr == nil {
+		if count, oldestAge, countErr := reporter.ReportBacklog(ctx); countErr == nil {
 			relay.metrics.OutboxBacklogRecords.Set(float64(count))
+			relay.metrics.OutboxOldestRowAgeSeconds.Set(oldestAge)
 		}
 	}
 

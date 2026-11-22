@@ -70,6 +70,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	metricsCollector := metrics.New(nil)
+	metricsCollector.RegisterPoolStats(databasePool, "api")
 
 	api := httpapi.NewServer(
 		databasePool,

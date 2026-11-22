@@ -26,12 +26,17 @@ func TestMetricsRegistrationAndCollection(t *testing.T) {
 
 	// 3. Outbox metrics
 	m.OutboxBacklogRecords.Set(42)
+	m.OutboxOldestRowAgeSeconds.Set(3.5)
 
-	// 4. Worker metrics
+	// 4. Kafka metrics
+	m.KafkaConsumerLag.WithLabelValues("reservation-events", "0").Set(5)
+
+	// 5. Worker metrics
 	m.WorkerEventsProcessedTotal.WithLabelValues("reservation.held.v1", "confirmed").Inc()
 	m.WorkerEventDurationSeconds.WithLabelValues("reservation.held.v1").Observe(0.045)
 	m.WorkerRetriesTotal.WithLabelValues("reservation.held.v1").Inc()
-	m.WorkerDLQEventsTotal.WithLabelValues("reservation.held.v1").Inc()
+	m.WorkerDLQEventsTotal.WithLabelValues("reservation.held.v1", "poison_payload").Inc()
+	m.SagaLatencySeconds.WithLabelValues("confirmed").Observe(0.125)
 
 	// Gather metrics from isolated registry
 	metricFamilies, err := reg.Gather()
@@ -47,10 +52,13 @@ func TestMetricsRegistrationAndCollection(t *testing.T) {
 		"orderflow_redis_cache_misses_total":        false,
 		"orderflow_redis_failopen_total":            false,
 		"orderflow_outbox_backlog_records":          false,
+		"orderflow_outbox_oldest_row_age_seconds":   false,
+		"orderflow_kafka_consumer_lag":              false,
 		"orderflow_worker_events_processed_total":   false,
 		"orderflow_worker_event_duration_seconds":   false,
 		"orderflow_worker_retries_total":            false,
 		"orderflow_worker_dlq_events_total":         false,
+		"orderflow_saga_duration_seconds":           false,
 	}
 
 	for _, mf := range metricFamilies {

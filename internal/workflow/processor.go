@@ -94,11 +94,12 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 
 	var status string
 	var expiresAt *time.Time
+	var createdAt time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT status, expires_at
+		SELECT status, expires_at, created_at
 		FROM reservations
 		WHERE id = $1
-		FOR UPDATE`, payload.ReservationID).Scan(&status, &expiresAt)
+		FOR UPDATE`, payload.ReservationID).Scan(&status, &expiresAt, &createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	}
@@ -125,6 +126,7 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 	}
 	if processor.metrics != nil {
 		processor.metrics.WorkerEventsProcessedTotal.WithLabelValues(event.Type, finalStatus).Inc()
+		processor.metrics.SagaLatencySeconds.WithLabelValues(finalStatus).Observe(time.Since(createdAt).Seconds())
 	}
 	if (finalStatus == "cancelled" || finalStatus == "expired") && processor.cache != nil {
 		_ = processor.cache.ClearSoldOut(ctx, payload.EventID)
@@ -191,6 +193,7 @@ type HeldReservation struct {
 	CustomerID    string    `json:"customer_id"`
 	Quantity      int       `json:"quantity"`
 	ExpiresAt     time.Time `json:"expires_at"`
+	CreatedAt     time.Time `json:"created_at,omitempty"`
 }
 
 // ParseHeldReservation validates a reservation.held.v1 event payload.

@@ -48,6 +48,13 @@ type memoryStore struct {
 	publishFailures int
 }
 
+func (store *memoryStore) ReportBacklog(context.Context) (int64, float64, error) {
+	if store.claimed {
+		return 0, 0, nil
+	}
+	return 1, 0.5, nil
+}
+
 func (store *memoryStore) ClaimNext(context.Context) (events.Envelope, bool, error) {
 	if store.claimed {
 		return events.Envelope{}, false, nil

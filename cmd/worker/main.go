@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -82,6 +83,7 @@ func run(logger *slog.Logger) error {
 	}
 	defer producerClient.Close()
 	metricsCollector := metrics.New(nil)
+	metricsCollector.RegisterPoolStats(databasePool, "worker")
 
 	publisher := messaging.NewPublisher(producerClient, configuration.KafkaTopic)
 	relay := outbox.NewRelay(outbox.NewPostgresStore(databasePool, 30*time.Second), publisher, configuration.WorkerPollInterval).WithMetrics(metricsCollector)
@@ -122,6 +124,19 @@ func run(logger *slog.Logger) error {
 		if errs := fetches.Errors(); len(errs) > 0 {
 			return fmt.Errorf("poll Kafka: %w", errs[0].Err)
 		}
+		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
+			lag := int64(0)
+			if len(p.Records) > 0 {
+				lastOffset := p.Records[len(p.Records)-1].Offset
+				lag = p.HighWatermark - lastOffset - 1
+				if lag < 0 {
+					lag = 0
+				}
+			}
+			if metricsCollector != nil {
+				metricsCollector.KafkaConsumerLag.WithLabelValues(p.Topic, strconv.Itoa(int(p.Partition))).Set(float64(lag))
+			}
+		})
 		fetches.EachRecord(func(record *kgo.Record) {
 			if err := handleRecord(ctx, processor, consumer, dlqPublisher, metricsCollector, logger, record); err != nil {
 				logger.Error("handle Kafka record", "error", err)
@@ -149,7 +164,7 @@ func handleRecord(
 			_ = dlq.PublishDLQ(ctx, record.Value, err.Error(), 0)
 		}
 		if m != nil {
-			m.WorkerDLQEventsTotal.WithLabelValues("poison").Inc()
+			m.WorkerDLQEventsTotal.WithLabelValues("poison", "unparseable_envelope").Inc()
 		}
 		return committer.CommitRecords(ctx, record)
 	}
@@ -179,14 +194,19 @@ func handleRecord(
 		}
 	}
 
+	reason := "max_retries_exceeded"
+	if workflow.IsPoisonError(lastErr) {
+		reason = "poison_payload"
+	}
+
 	if logger != nil {
-		logger.Error("message handling failed, forwarding to DLQ", "event_id", event.ID, "error", lastErr)
+		logger.Error("message handling failed, forwarding to DLQ", "event_id", event.ID, "reason", reason, "error", lastErr)
 	}
 	if dlq != nil {
 		_ = dlq.PublishDLQ(ctx, record.Value, lastErr.Error(), maxRetries)
 	}
 	if m != nil {
-		m.WorkerDLQEventsTotal.WithLabelValues(event.Type).Inc()
+		m.WorkerDLQEventsTotal.WithLabelValues(event.Type, reason).Inc()
 	}
 
 	return committer.CommitRecords(ctx, record)
