@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -63,6 +64,7 @@ type Service struct {
 	holdDuration time.Duration
 	cache        inventoryCache
 	soldOutTTL   time.Duration
+	sfGroup      singleflight.Group
 }
 
 func NewService(database *pgxpool.Pool, holdDuration time.Duration) *Service {
@@ -73,6 +75,19 @@ func (service *Service) WithCache(cache inventoryCache, ttl time.Duration) *Serv
 	service.cache = cache
 	service.soldOutTTL = ttl
 	return service
+}
+
+func (service *Service) isSoldOut(ctx context.Context, eventID string) bool {
+	if service.cache == nil {
+		return false
+	}
+	val, err, _ := service.sfGroup.Do("soldout:"+eventID, func() (any, error) {
+		return service.cache.IsSoldOut(ctx, eventID)
+	})
+	if err != nil || val == nil {
+		return false
+	}
+	return val.(bool)
 }
 
 func (service *Service) CreateEvent(ctx context.Context, input CreateEventInput) (Event, error) {
@@ -93,16 +108,22 @@ func (service *Service) GetEvent(ctx context.Context, eventID string) (Event, er
 		return Event{}, ErrEventNotFound
 	}
 
-	const query = `
-		SELECT id, name, starts_at, capacity, held_quantity, confirmed_quantity
-		FROM events
-		WHERE id = $1`
+	val, err, _ := service.sfGroup.Do("event:"+eventID, func() (any, error) {
+		const query = `
+			SELECT id, name, starts_at, capacity, held_quantity, confirmed_quantity
+			FROM events
+			WHERE id = $1`
 
-	event, err := scanEvent(service.database.QueryRow(ctx, query, eventID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Event{}, ErrEventNotFound
+		event, err := scanEvent(service.database.QueryRow(ctx, query, eventID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Event{}, ErrEventNotFound
+		}
+		return event, err
+	})
+	if err != nil {
+		return Event{}, err
 	}
-	return event, err
+	return val.(Event), nil
 }
 
 func (service *Service) CreateReservation(ctx context.Context, input CreateReservationInput) (Reservation, error) {
@@ -113,10 +134,8 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 		return Reservation{}, fmt.Errorf("customer_id, positive quantity, idempotency key, and request hash are required")
 	}
 
-	if service.cache != nil {
-		if soldOut, _ := service.cache.IsSoldOut(ctx, input.EventID); soldOut {
-			return Reservation{}, ErrInsufficientInventory
-		}
+	if service.isSoldOut(ctx, input.EventID) {
+		return Reservation{}, ErrInsufficientInventory
 	}
 
 	tx, err := service.database.Begin(ctx)
