@@ -163,6 +163,176 @@ func TestReservationStatusIsOwnedByAuthenticatedUser(t *testing.T) {
 	}
 }
 
+func TestRateLimitingLoginEndpoint(t *testing.T) {
+	requireE2E(t)
+
+	// Use a unique client IP via X-Forwarded-For so this test has its own rate limit bucket
+	var b [2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("crypto rand: %v", err)
+	}
+	clientIP := fmt.Sprintf("198.51.%d.%d", b[0], b[1])
+	headers := map[string]string{
+		"X-Forwarded-For": clientIP,
+	}
+
+	email := "e2e-ratelimit-" + randomUUID(t) + "@example.com"
+	password := "correct horse battery"
+	register(t, email, password)
+
+	// Configured limit is 5 requests per minute
+	for i := 1; i <= 5; i++ {
+		resp := request(t, http.MethodPost, "/v1/auth/login", map[string]any{
+			"email":    email,
+			"password": password,
+		}, headers)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("request %d: expected status 200, got %d", i, resp.StatusCode)
+		}
+		if limit := resp.Header.Get("X-RateLimit-Limit"); limit != "5" {
+			t.Fatalf("request %d: X-RateLimit-Limit = %q, want 5", i, limit)
+		}
+		expectedRemaining := fmt.Sprintf("%d", 5-i)
+		if rem := resp.Header.Get("X-RateLimit-Remaining"); rem != expectedRemaining {
+			t.Fatalf("request %d: X-RateLimit-Remaining = %q, want %s", i, rem, expectedRemaining)
+		}
+	}
+
+	// 6th request should be rate-limited (HTTP 429)
+	blockedResp := request(t, http.MethodPost, "/v1/auth/login", map[string]any{
+		"email":    email,
+		"password": password,
+	}, headers)
+	defer blockedResp.Body.Close()
+
+	if blockedResp.StatusCode != http.StatusTooManyRequests {
+		payload, _ := io.ReadAll(blockedResp.Body)
+		t.Fatalf("expected status 429, got %d; body = %s", blockedResp.StatusCode, payload)
+	}
+	if retryAfter := blockedResp.Header.Get("Retry-After"); retryAfter == "" {
+		t.Fatal("expected non-empty Retry-After header on 429 response")
+	}
+
+	// A different IP is not affected
+	var b2 [2]byte
+	if _, err := rand.Read(b2[:]); err != nil {
+		t.Fatalf("crypto rand: %v", err)
+	}
+	diffIPHeaders := map[string]string{
+		"X-Forwarded-For": fmt.Sprintf("203.0.%d.%d", b2[0], b2[1]),
+	}
+	allowedResp := request(t, http.MethodPost, "/v1/auth/login", map[string]any{
+		"email":    email,
+		"password": password,
+	}, diffIPHeaders)
+	defer allowedResp.Body.Close()
+
+	if allowedResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200 for different IP, got %d", allowedResp.StatusCode)
+	}
+}
+
+func TestRateLimitingReservationEndpoint(t *testing.T) {
+	requireE2E(t)
+
+	_, token := registerAndLogin(t)
+	// Create an event with capacity 20 so capacity is not the bottleneck
+	createdEvent := createEvent(t, token.AccessToken, 20)
+
+	// Rate limit for reservation is 10 requests per minute
+	for i := 1; i <= 10; i++ {
+		resp := authenticatedRequest(t, token.AccessToken, http.MethodPost, "/v1/events/"+createdEvent.ID+"/reservations", map[string]any{
+			"quantity": 1,
+		}, map[string]string{
+			"Idempotency-Key": randomUUID(t),
+		})
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("reservation %d: expected 201 Created, got %d", i, resp.StatusCode)
+		}
+		if limit := resp.Header.Get("X-RateLimit-Limit"); limit != "10" {
+			t.Fatalf("reservation %d: X-RateLimit-Limit = %q, want 10", i, limit)
+		}
+		expectedRemaining := fmt.Sprintf("%d", 10-i)
+		if rem := resp.Header.Get("X-RateLimit-Remaining"); rem != expectedRemaining {
+			t.Fatalf("reservation %d: X-RateLimit-Remaining = %q, want %s", i, rem, expectedRemaining)
+		}
+	}
+
+	// 11th request from the same user should return HTTP 429
+	blockedResp := authenticatedRequest(t, token.AccessToken, http.MethodPost, "/v1/events/"+createdEvent.ID+"/reservations", map[string]any{
+		"quantity": 1,
+	}, map[string]string{
+		"Idempotency-Key": randomUUID(t),
+	})
+	defer blockedResp.Body.Close()
+
+	if blockedResp.StatusCode != http.StatusTooManyRequests {
+		payload, _ := io.ReadAll(blockedResp.Body)
+		t.Fatalf("expected 429 Too Many Requests, got %d; body = %s", blockedResp.StatusCode, payload)
+	}
+	if retryAfter := blockedResp.Header.Get("Retry-After"); retryAfter == "" {
+		t.Fatal("expected Retry-After header on 429 response")
+	}
+
+	// A different user is NOT blocked and has their own quota
+	_, otherToken := registerAndLogin(t)
+	otherResp := authenticatedRequest(t, otherToken.AccessToken, http.MethodPost, "/v1/events/"+createdEvent.ID+"/reservations", map[string]any{
+		"quantity": 1,
+	}, map[string]string{
+		"Idempotency-Key": randomUUID(t),
+	})
+	defer otherResp.Body.Close()
+
+	if otherResp.StatusCode != http.StatusCreated {
+		payload, _ := io.ReadAll(otherResp.Body)
+		t.Fatalf("other user reservation status = %d, want 201; body = %s", otherResp.StatusCode, payload)
+	}
+}
+
+func TestSoldOutEventFastPathCache(t *testing.T) {
+	requireE2E(t)
+
+	_, token := registerAndLogin(t)
+	// Event with capacity 1
+	createdEvent := createEvent(t, token.AccessToken, 1)
+
+	// Fill the 1 ticket
+	first := createReservation(t, token.AccessToken, createdEvent.ID, 1, randomUUID(t))
+	if first.Status != "held" {
+		t.Fatalf("reservation status = %q, want held", first.Status)
+	}
+
+	// Next reservation attempt fails with 409 Conflict (event is full) and marks sold out cache
+	resp1 := authenticatedRequest(t, token.AccessToken, http.MethodPost, "/v1/events/"+createdEvent.ID+"/reservations", map[string]any{
+		"quantity": 1,
+	}, map[string]string{
+		"Idempotency-Key": randomUUID(t),
+	})
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict on sold-out event, got %d", resp1.StatusCode)
+	}
+
+	// Immediate follow-up reservation hits the fast-path sold out cache
+	start := time.Now()
+	resp2 := authenticatedRequest(t, token.AccessToken, http.MethodPost, "/v1/events/"+createdEvent.ID+"/reservations", map[string]any{
+		"quantity": 1,
+	}, map[string]string{
+		"Idempotency-Key": randomUUID(t),
+	})
+	defer resp2.Body.Close()
+	elapsed := time.Since(start)
+
+	if resp2.StatusCode != http.StatusConflict {
+		t.Fatalf("expected cached 409 Conflict, got %d", resp2.StatusCode)
+	}
+	t.Logf("Fast path cached sold-out rejection completed in %v", elapsed)
+}
+
 func register(t *testing.T, email, password string) user {
 	t.Helper()
 
@@ -287,6 +457,11 @@ func request(t *testing.T, method, path string, body any, headers map[string]str
 	}
 	for key, value := range headers {
 		request.Header.Set(key, value)
+	}
+	if request.Header.Get("X-Forwarded-For") == "" {
+		var rb [2]byte
+		_, _ = rand.Read(rb[:])
+		request.Header.Set("X-Forwarded-For", fmt.Sprintf("192.0.%d.%d", rb[0], rb[1]))
 	}
 
 	response, err := http.DefaultClient.Do(request)
