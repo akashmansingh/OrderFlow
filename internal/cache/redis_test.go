@@ -2,8 +2,11 @@ package cache_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -182,5 +185,140 @@ func TestRedisClientFailsOpenOnConnectionError(t *testing.T) {
 	}
 	if soldOut {
 		t.Fatalf("expected soldOut=false on Redis error, got true")
+	}
+}
+
+func TestRedisClientConcurrentRateLimiting(t *testing.T) {
+	server := miniredis.RunT(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	client, err := cache.New(server.Addr(), "", time.Second, logger)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+	key := "test:concurrent:rate"
+	limit := 10
+	window := time.Minute
+	numRequests := 50
+
+	var wg sync.WaitGroup
+	startBarrier := make(chan struct{})
+	var allowedCount atomic.Int64
+	var blockedCount atomic.Int64
+
+	for i := 0; i < numRequests; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-startBarrier
+			allowed, _, retryAfter, err := client.Allow(ctx, key, limit, window)
+			if err != nil {
+				t.Errorf("Allow() unexpected error = %v", err)
+				return
+			}
+			if allowed {
+				allowedCount.Add(1)
+			} else {
+				blockedCount.Add(1)
+				if retryAfter <= 0 {
+					t.Errorf("blocked request retryAfter <= 0: %v", retryAfter)
+				}
+			}
+		}()
+	}
+
+	close(startBarrier)
+	wg.Wait()
+
+	if allowedCount.Load() != int64(limit) {
+		t.Fatalf("allowedCount = %d, want %d", allowedCount.Load(), limit)
+	}
+	if blockedCount.Load() != int64(numRequests-limit) {
+		t.Fatalf("blockedCount = %d, want %d", blockedCount.Load(), numRequests-limit)
+	}
+}
+
+func TestRedisClientConcurrentSoldOutOperations(t *testing.T) {
+	server := miniredis.RunT(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	client, err := cache.New(server.Addr(), "", time.Second, logger)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+	eventID := "00000000-0000-0000-0000-000000000099"
+	numGoroutines := 30
+	var wg sync.WaitGroup
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			switch idx % 3 {
+			case 0:
+				_ = client.MarkSoldOut(ctx, eventID, 5*time.Second)
+			case 1:
+				_, _ = client.IsSoldOut(ctx, eventID)
+			case 2:
+				_ = client.ClearSoldOut(ctx, eventID)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestRedisClientAllowDefensiveNilLogger(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	// Explicitly pass nil logger: New must not panic and must fall back to default logger
+	client, err := cache.New(server.Addr(), "", time.Second, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer client.Close()
+
+	allowed, rem, _, err := client.Allow(context.Background(), "test:nil:logger", 5, time.Minute)
+	if err != nil || !allowed || rem != 4 {
+		t.Fatalf("Allow() with nil logger: allowed=%v, remaining=%d, err=%v", allowed, rem, err)
+	}
+}
+
+func TestRedisClientConcurrentFailOpen(t *testing.T) {
+	server := miniredis.RunT(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	client, err := cache.New(server.Addr(), "", 100*time.Millisecond, logger)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	server.Close() // Disconnect Redis
+
+	ctx := context.Background()
+	numGoroutines := 30
+	var wg sync.WaitGroup
+	var failOpenCount atomic.Int64
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			allowed, remaining, _, err := client.Allow(ctx, fmt.Sprintf("test:failopen:%d", idx), 5, time.Minute)
+			if err != nil && allowed && remaining == 5 {
+				failOpenCount.Add(1)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	if failOpenCount.Load() != int64(numGoroutines) {
+		t.Fatalf("failOpenCount = %d, want %d", failOpenCount.Load(), numGoroutines)
 	}
 }

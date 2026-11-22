@@ -68,8 +68,12 @@ func (expiry *Expiry) RunOnce(ctx context.Context) error {
 		return fmt.Errorf("commit expiry transaction: %w", err)
 	}
 	if expiry.cache != nil {
+		cleared := make(map[string]struct{}, len(expired))
 		for _, reservation := range expired {
-			_ = expiry.cache.ClearSoldOut(ctx, reservation.EventID)
+			if _, exists := cleared[reservation.EventID]; !exists {
+				cleared[reservation.EventID] = struct{}{}
+				_ = expiry.cache.ClearSoldOut(ctx, reservation.EventID)
+			}
 		}
 	}
 	return nil

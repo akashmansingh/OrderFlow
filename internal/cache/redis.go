@@ -23,6 +23,9 @@ func New(address, password string, timeout time.Duration, logger *slog.Logger) (
 	if timeout <= 0 {
 		timeout = time.Second
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	rdb := redis.NewClient(&redis.Options{
 		Addr:         address,
 		Password:     password,
@@ -168,6 +171,11 @@ func (c *Client) Allow(ctx context.Context, key string, limit int, window time.D
 	if err != nil {
 		c.logger.Warn("redis rate limiter script failed, failing open", "key", key, "error", err)
 		return true, limit, 0, err
+	}
+
+	if len(res) < 3 {
+		c.logger.Warn("redis rate limiter script returned invalid result", "key", key, "result", res)
+		return true, limit, 0, fmt.Errorf("unexpected script result length: %d", len(res))
 	}
 
 	allowedVal, _ := res[0].(int64)

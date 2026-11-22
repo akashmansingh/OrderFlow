@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,6 +178,62 @@ func TestRateLimitFailsOpenOnLimiterError(t *testing.T) {
 	// Should fail open and process the request normally
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK on limiter error fail-open, got %d", rec.Code)
+	}
+}
+
+func TestConcurrentHTTPRateLimiting(t *testing.T) {
+	server := miniredis.RunT(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	redisClient, err := cache.New(server.Addr(), "", time.Second, logger)
+	if err != nil {
+		t.Fatalf("cache.New() error = %v", err)
+	}
+	defer redisClient.Close()
+
+	authenticator := newStubAuthenticator()
+	limit := 10
+	apiServer := httpapi.NewServer(nil, nil, authenticator, redisClient, limit, 20, logger)
+	handler := apiServer.Handler()
+
+	numRequests := 50
+	var wg sync.WaitGroup
+	startBarrier := make(chan struct{})
+	var successCount atomic.Int64
+	var rateLimitedCount atomic.Int64
+
+	for i := 0; i < numRequests; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-startBarrier
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"test@example.com","password":"valid-password-123"}`))
+			req.RemoteAddr = "192.168.1.200:1234" // Same IP
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			switch rec.Code {
+			case http.StatusOK:
+				successCount.Add(1)
+			case http.StatusTooManyRequests:
+				rateLimitedCount.Add(1)
+				if rec.Header().Get("Retry-After") == "" {
+					t.Errorf("missing Retry-After header on 429 response")
+				}
+			default:
+				t.Errorf("unexpected status code: %d", rec.Code)
+			}
+		}(i)
+	}
+
+	close(startBarrier)
+	wg.Wait()
+
+	if successCount.Load() != int64(limit) {
+		t.Fatalf("successCount = %d, want %d", successCount.Load(), limit)
+	}
+	if rateLimitedCount.Load() != int64(numRequests-limit) {
+		t.Fatalf("rateLimitedCount = %d, want %d", rateLimitedCount.Load(), numRequests-limit)
 	}
 }
 

@@ -82,7 +82,9 @@ func (service *Service) isSoldOut(ctx context.Context, eventID string) bool {
 		return false
 	}
 	val, err, _ := service.sfGroup.Do("soldout:"+eventID, func() (any, error) {
-		return service.cache.IsSoldOut(ctx, eventID)
+		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		return service.cache.IsSoldOut(checkCtx, eventID)
 	})
 	if err != nil || val == nil {
 		return false
@@ -109,12 +111,15 @@ func (service *Service) GetEvent(ctx context.Context, eventID string) (Event, er
 	}
 
 	val, err, _ := service.sfGroup.Do("event:"+eventID, func() (any, error) {
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+
 		const query = `
 			SELECT id, name, starts_at, capacity, held_quantity, confirmed_quantity
 			FROM events
 			WHERE id = $1`
 
-		event, err := scanEvent(service.database.QueryRow(ctx, query, eventID))
+		event, err := scanEvent(service.database.QueryRow(queryCtx, query, eventID))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Event{}, ErrEventNotFound
 		}

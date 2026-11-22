@@ -133,3 +133,64 @@ func TestSingleflightDeduplicatesConcurrentSoldOutChecks(t *testing.T) {
 		t.Fatalf("singleflight failed to deduplicate: checkCount = %d, want <= 2", count)
 	}
 }
+
+func TestSingleflightContextIsolation(t *testing.T) {
+	cache := newStubCache()
+	eventID := "11111111-1111-1111-1111-111111111111"
+	cache.soldOutEvents[eventID] = true
+
+	slowCache := &slowStubCache{
+		underlying: cache,
+		onCheck: func() {
+			time.Sleep(50 * time.Millisecond)
+		},
+	}
+
+	svc := reservation.NewService(nil, 10*time.Minute).WithCache(slowCache, 5*time.Second)
+
+	// Caller 1 has a very short context that will cancel while the singleflight operation is running
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel1()
+
+	// Caller 2 has an ample context
+	ctx2 := context.Background()
+
+	input1 := reservation.CreateReservationInput{
+		EventID:        eventID,
+		CustomerID:     "22222222-2222-2222-2222-222222222222",
+		Quantity:       1,
+		IdempotencyKey: "idemp-cancel-1",
+		RequestHash:    []byte("hash"),
+	}
+
+	input2 := reservation.CreateReservationInput{
+		EventID:        eventID,
+		CustomerID:     "33333333-3333-3333-3333-333333333333",
+		Quantity:       1,
+		IdempotencyKey: "idemp-cancel-2",
+		RequestHash:    []byte("hash"),
+	}
+
+	var wg sync.WaitGroup
+	var err2 error
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_, _ = svc.CreateReservation(ctx1, input1)
+	}()
+
+	go func() {
+		defer wg.Done()
+		// Small delay to ensure caller 1 initiates the singleflight Do call
+		time.Sleep(5 * time.Millisecond)
+		_, err2 = svc.CreateReservation(ctx2, input2)
+	}()
+
+	wg.Wait()
+
+	// Caller 2 must still get ErrInsufficientInventory (cached sold out) rather than being corrupted by caller 1's cancellation
+	if !errors.Is(err2, reservation.ErrInsufficientInventory) {
+		t.Fatalf("caller 2 error = %v, want ErrInsufficientInventory", err2)
+	}
+}
