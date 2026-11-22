@@ -55,7 +55,7 @@ func main() {
 
 	if allPassed {
 		fmt.Println("RESULT: ALL 5 INVARIANTS PASSED (Zero anomalies, perfect conservation).")
-		fmt.Println("========================================================\n")
+		fmt.Println("========================================================")
 		os.Exit(0)
 	} else {
 		fmt.Fprintln(os.Stderr, "RESULT: INVARIANT VIOLATION DETECTED! (See details above)")

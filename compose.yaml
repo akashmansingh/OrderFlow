@@ -10,7 +10,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgres://orderflow:local-dev-password@postgres:5432/orderflow?sslmode=disable}
       DATABASE_TIMEOUT: ${DATABASE_TIMEOUT:-5}
       RESERVATION_HOLD_SECONDS: ${RESERVATION_HOLD_SECONDS:-600}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-with-minimum-32-bytes-length-ok}
       JWT_ACCESS_TOKEN_MINUTES: ${JWT_ACCESS_TOKEN_MINUTES:-15}
       JWT_ISSUER: ${JWT_ISSUER:-orderflow}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-orderflow-api}
@@ -138,7 +138,7 @@ services:
       - --smp
       - "1"
       - --memory
-      - 1G
+      - 768M
       - --reserve-memory
       - 0M
       - --node-id
@@ -155,7 +155,7 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1024M
+          memory: 1536M
 
 volumes:
   pgadmin-data:

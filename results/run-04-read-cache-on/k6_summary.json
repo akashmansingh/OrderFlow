@@ -1,0 +1,166 @@
+{
+    "metrics": {
+        "iteration_duration": {
+            "min": 0.511997,
+            "med": 0.940157,
+            "max": 30.817896,
+            "p(90)": 1.290864,
+            "p(95)": 1.697203,
+            "avg": 1.142521321978527
+        },
+        "unexpected_errors": {
+            "passes": 0,
+            "fails": 0,
+            "thresholds": {
+                "rate<0.005": false
+            },
+            "value": 0
+        },
+        "data_received": {
+            "rate": 446064.98646835936,
+            "count": 4470601
+        },
+        "http_req_duration{expected_response:true}": {
+            "min": 0.423541,
+            "med": 0.816587,
+            "max": 28.193446,
+            "p(90)": 1.1178150999999998,
+            "p(95)": 1.4287948,
+            "avg": 0.9727436987068361
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 15002,
+            "value": 0
+        },
+        "iterations": {
+            "count": 15001,
+            "rate": 1496.7609191721335
+        },
+        "vus_max": {
+            "value": 200,
+            "min": 200,
+            "max": 200
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0
+        },
+        "data_sent": {
+            "count": 5670876,
+            "rate": 565825.316596973
+        },
+        "http_req_connecting": {
+            "max": 24.627893,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.03562738154912679,
+            "min": 0,
+            "med": 0
+        },
+        "read_success_total": {
+            "count": 15001,
+            "rate": 1496.7609191721335
+        },
+        "vus": {
+            "value": 2,
+            "min": 1,
+            "max": 9
+        },
+        "http_reqs": {
+            "count": 15002,
+            "rate": 1496.8606965815843
+        },
+        "http_req_blocked": {
+            "med": 0.0041375000000000006,
+            "max": 24.727619,
+            "p(90)": 0.006903,
+            "p(95)": 0.010689499999999989,
+            "avg": 0.042193053459538936,
+            "min": 0.001242
+        },
+        "http_req_duration": {
+            "min": 0.423541,
+            "med": 0.816587,
+            "max": 28.193446,
+            "p(90)": 1.1178150999999998,
+            "p(95)": 1.4287948,
+            "avg": 0.9727436987068361
+        },
+        "http_req_waiting": {
+            "p(90)": 1.0092721,
+            "p(95)": 1.3001499499999996,
+            "avg": 0.8842309678042872,
+            "min": 0.342961,
+            "med": 0.7304005,
+            "max": 28.137021
+        },
+        "http_req_receiving": {
+            "p(90)": 0.1037825,
+            "p(95)": 0.13752599999999998,
+            "avg": 0.06375103066257845,
+            "min": 0.009587,
+            "med": 0.0530395,
+            "max": 5.423734
+        },
+        "http_req_sending": {
+            "avg": 0.024761700239968026,
+            "min": 0.00502,
+            "med": 0.012343,
+            "max": 5.26331,
+            "p(90)": 0.0488319,
+            "p(95)": 0.06416949999999999
+        },
+        "checks": {
+            "fails": 0,
+            "passes": 15002,
+            "value": 1
+        },
+        "read_latency_ms": {
+            "avg": 1.0970601959869342,
+            "min": 0,
+            "med": 1,
+            "max": 31,
+            "p(90)": 1,
+            "p(95)": 2
+        }
+    },
+    "setup_data": {
+        "eventId": "986ed6fd-89cd-4c38-9032-cd522c56acab"
+    },
+    "root_group": {
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {
+                    "event created": {
+                        "name": "event created",
+                        "path": "::setup::event created",
+                        "id": "1f1f5459ceb43cd5ccabd96402cc8889",
+                        "passes": 1,
+                        "fails": 0
+                    }
+                }
+            }
+        },
+        "checks": {
+            "status is 200": {
+                "fails": 0,
+                "name": "status is 200",
+                "path": "::status is 200",
+                "id": "6210a8cd14cd70477eba5c5e4cb3fb5f",
+                "passes": 15001
+            }
+        },
+        "name": ""
+    }
+}

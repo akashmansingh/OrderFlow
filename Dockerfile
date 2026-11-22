@@ -4,7 +4,7 @@ ARG SERVICE=api
 
 WORKDIR /src
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . ./
@@ -17,3 +17,4 @@ COPY --from=build /orderflow /orderflow
 EXPOSE 8080
 
 ENTRYPOINT ["/orderflow"]
+
