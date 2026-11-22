@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/theRiddler9/OrderFlow/internal/cache"
 	"github.com/theRiddler9/OrderFlow/internal/config"
 	"github.com/theRiddler9/OrderFlow/internal/database"
 	"github.com/theRiddler9/OrderFlow/internal/events"
@@ -58,6 +59,17 @@ func run(logger *slog.Logger) error {
 	relay := outbox.NewRelay(outbox.NewPostgresStore(databasePool, 30*time.Second), publisher, configuration.WorkerPollInterval)
 	processor := workflow.NewProcessor(databasePool, configuration.SimulatedPaymentResult)
 	expiry := workflow.NewExpiry(databasePool)
+
+	if configuration.RedisAddress != "" {
+		rc, err := cache.New(configuration.RedisAddress, configuration.RedisPassword, configuration.RedisTimeout, logger)
+		if err != nil {
+			logger.Warn("redis connection unavailable, worker cache invalidation disabled", "error", err)
+		} else {
+			defer rc.Close()
+			processor.WithCache(rc)
+			expiry.WithCache(rc)
+		}
+	}
 
 	consumer, err := kgo.NewClient(
 		kgo.SeedBrokers(configuration.KafkaBrokers...),

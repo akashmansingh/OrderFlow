@@ -50,3 +50,20 @@ func TestParseHeldReservationRejectsMissingQuantity(t *testing.T) {
 		t.Fatal("ParseHeldReservation() error = nil, want validation error")
 	}
 }
+
+type stubWorkflowCache struct {
+	cleared []string
+}
+
+func (s *stubWorkflowCache) ClearSoldOut(ctx context.Context, eventID string) error {
+	s.cleared = append(s.cleared, eventID)
+	return nil
+}
+
+func TestProcessorWithCache(t *testing.T) {
+	cache := &stubWorkflowCache{}
+	processor := workflow.NewProcessor(nil, "approve").WithCache(cache)
+	if processor == nil {
+		t.Fatal("expected non-nil processor")
+	}
+}

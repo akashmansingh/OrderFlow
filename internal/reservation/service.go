@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -53,13 +54,42 @@ type CreateReservationInput struct {
 	RequestHash    []byte
 }
 
+type inventoryCache interface {
+	IsSoldOut(ctx context.Context, eventID string) (bool, error)
+	MarkSoldOut(ctx context.Context, eventID string, ttl time.Duration) error
+}
+
 type Service struct {
 	database     *pgxpool.Pool
 	holdDuration time.Duration
+	cache        inventoryCache
+	soldOutTTL   time.Duration
+	sfGroup      singleflight.Group
 }
 
 func NewService(database *pgxpool.Pool, holdDuration time.Duration) *Service {
 	return &Service{database: database, holdDuration: holdDuration}
+}
+
+func (service *Service) WithCache(cache inventoryCache, ttl time.Duration) *Service {
+	service.cache = cache
+	service.soldOutTTL = ttl
+	return service
+}
+
+func (service *Service) isSoldOut(ctx context.Context, eventID string) bool {
+	if service.cache == nil {
+		return false
+	}
+	val, err, _ := service.sfGroup.Do("soldout:"+eventID, func() (any, error) {
+		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		return service.cache.IsSoldOut(checkCtx, eventID)
+	})
+	if err != nil || val == nil {
+		return false
+	}
+	return val.(bool)
 }
 
 func (service *Service) CreateEvent(ctx context.Context, input CreateEventInput) (Event, error) {
@@ -80,16 +110,25 @@ func (service *Service) GetEvent(ctx context.Context, eventID string) (Event, er
 		return Event{}, ErrEventNotFound
 	}
 
-	const query = `
-		SELECT id, name, starts_at, capacity, held_quantity, confirmed_quantity
-		FROM events
-		WHERE id = $1`
+	val, err, _ := service.sfGroup.Do("event:"+eventID, func() (any, error) {
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
 
-	event, err := scanEvent(service.database.QueryRow(ctx, query, eventID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Event{}, ErrEventNotFound
+		const query = `
+			SELECT id, name, starts_at, capacity, held_quantity, confirmed_quantity
+			FROM events
+			WHERE id = $1`
+
+		event, err := scanEvent(service.database.QueryRow(queryCtx, query, eventID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Event{}, ErrEventNotFound
+		}
+		return event, err
+	})
+	if err != nil {
+		return Event{}, err
 	}
-	return event, err
+	return val.(Event), nil
 }
 
 func (service *Service) CreateReservation(ctx context.Context, input CreateReservationInput) (Reservation, error) {
@@ -98,6 +137,10 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 	}
 	if _, err := uuid.Parse(input.CustomerID); err != nil || input.Quantity <= 0 || input.IdempotencyKey == "" || len(input.RequestHash) == 0 {
 		return Reservation{}, fmt.Errorf("customer_id, positive quantity, idempotency key, and request hash are required")
+	}
+
+	if service.isSoldOut(ctx, input.EventID) {
+		return Reservation{}, ErrInsufficientInventory
 	}
 
 	tx, err := service.database.Begin(ctx)
@@ -118,6 +161,9 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 	}
 
 	if err := reserveInventory(ctx, tx, input.EventID, input.Quantity); err != nil {
+		if errors.Is(err, ErrInsufficientInventory) && service.cache != nil && service.soldOutTTL > 0 {
+			_ = service.cache.MarkSoldOut(ctx, input.EventID, service.soldOutTTL)
+		}
 		return Reservation{}, err
 	}
 

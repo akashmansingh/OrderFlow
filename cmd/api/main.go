@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/theRiddler9/OrderFlow/internal/auth"
+	"github.com/theRiddler9/OrderFlow/internal/cache"
 	"github.com/theRiddler9/OrderFlow/internal/config"
 	"github.com/theRiddler9/OrderFlow/internal/database"
 	"github.com/theRiddler9/OrderFlow/internal/httpapi"
@@ -53,7 +54,28 @@ func run(logger *slog.Logger) error {
 
 	reservationService := reservation.NewService(databasePool, configuration.ReservationHold)
 	authService := auth.NewService(auth.NewPostgresStore(databasePool), tokenManager)
-	api := httpapi.NewServer(databasePool, reservationService, authService, logger)
+
+	var redisClient *cache.Client
+	if configuration.RedisAddress != "" {
+		rc, err := cache.New(configuration.RedisAddress, configuration.RedisPassword, configuration.RedisTimeout, logger)
+		if err != nil {
+			logger.Warn("redis connection unavailable, rate limiting and sold-out cache will degrade gracefully", "error", err)
+		} else {
+			redisClient = rc
+			defer redisClient.Close()
+			reservationService.WithCache(redisClient, configuration.CacheSoldOutTTL)
+		}
+	}
+
+	api := httpapi.NewServer(
+		databasePool,
+		reservationService,
+		authService,
+		redisClient,
+		configuration.RateLimitLoginPerMinute,
+		configuration.RateLimitReservationPerMinute,
+		logger,
+	)
 	httpServer := &http.Server{
 		Addr:              configuration.HTTPAddress,
 		Handler:           api.Handler(),

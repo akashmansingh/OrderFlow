@@ -11,20 +11,26 @@ import (
 
 // Config contains process configuration supplied by the environment.
 type Config struct {
-	Environment            string
-	HTTPAddress            string
-	DatabaseURL            string
-	DatabaseTimeout        time.Duration
-	ReservationHold        time.Duration
-	KafkaBrokers           []string
-	KafkaTopic             string
-	KafkaGroupID           string
-	WorkerPollInterval     time.Duration
-	SimulatedPaymentResult string
-	JWTSecret              string
-	JWTAccessTokenMinutes  int
-	JWTIssuer              string
-	JWTAudience            string
+	Environment                   string
+	HTTPAddress                   string
+	DatabaseURL                   string
+	DatabaseTimeout               time.Duration
+	ReservationHold               time.Duration
+	KafkaBrokers                  []string
+	KafkaTopic                    string
+	KafkaGroupID                  string
+	WorkerPollInterval            time.Duration
+	SimulatedPaymentResult        string
+	JWTSecret                     string
+	JWTAccessTokenMinutes         int
+	JWTIssuer                     string
+	JWTAudience                   string
+	RedisAddress                  string
+	RedisPassword                 string
+	RedisTimeout                  time.Duration
+	RateLimitLoginPerMinute       int
+	RateLimitReservationPerMinute int
+	CacheSoldOutTTL               time.Duration
 }
 
 // Load reads configuration shared by the API and worker.
@@ -53,22 +59,44 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	redisTimeout, err := redisTimeoutFromEnv(50 * time.Millisecond)
+	if err != nil {
+		return Config{}, err
+	}
+	rateLimitLogin, err := positiveIntFromEnv("RATE_LIMIT_LOGIN_PER_MINUTE", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	rateLimitReservation, err := positiveIntFromEnv("RATE_LIMIT_RESERVATION_PER_MINUTE", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	soldOutTTL, err := durationFromEnv("CACHE_SOLD_OUT_TTL", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 
 	config := Config{
-		Environment:            valueOrDefault("APP_ENV", "development"),
-		HTTPAddress:            valueOrDefault("HTTP_ADDRESS", ":8080"),
-		DatabaseURL:            os.Getenv("DATABASE_URL"),
-		DatabaseTimeout:        timeout,
-		ReservationHold:        holdDuration,
-		KafkaBrokers:           brokers,
-		KafkaTopic:             valueOrDefault("KAFKA_TOPIC", "reservation-events"),
-		KafkaGroupID:           valueOrDefault("KAFKA_GROUP_ID", "orderflow-workflow-worker"),
-		WorkerPollInterval:     pollInterval,
-		SimulatedPaymentResult: paymentResult,
-		JWTSecret:              os.Getenv("JWT_SECRET"),
-		JWTAccessTokenMinutes:  accessTokenMinutes,
-		JWTIssuer:              valueOrDefault("JWT_ISSUER", "orderflow"),
-		JWTAudience:            valueOrDefault("JWT_AUDIENCE", "orderflow-api"),
+		Environment:                   valueOrDefault("APP_ENV", "development"),
+		HTTPAddress:                   valueOrDefault("HTTP_ADDRESS", ":8080"),
+		DatabaseURL:                   os.Getenv("DATABASE_URL"),
+		DatabaseTimeout:               timeout,
+		ReservationHold:               holdDuration,
+		KafkaBrokers:                  brokers,
+		KafkaTopic:                    valueOrDefault("KAFKA_TOPIC", "reservation-events"),
+		KafkaGroupID:                  valueOrDefault("KAFKA_GROUP_ID", "orderflow-workflow-worker"),
+		WorkerPollInterval:            pollInterval,
+		SimulatedPaymentResult:        paymentResult,
+		JWTSecret:                     os.Getenv("JWT_SECRET"),
+		JWTAccessTokenMinutes:         accessTokenMinutes,
+		JWTIssuer:                     valueOrDefault("JWT_ISSUER", "orderflow"),
+		JWTAudience:                   valueOrDefault("JWT_AUDIENCE", "orderflow-api"),
+		RedisAddress:                  valueOrDefault("REDIS_ADDRESS", "127.0.0.1:6379"),
+		RedisPassword:                 os.Getenv("REDIS_PASSWORD"),
+		RedisTimeout:                  redisTimeout,
+		RateLimitLoginPerMinute:       rateLimitLogin,
+		RateLimitReservationPerMinute: rateLimitReservation,
+		CacheSoldOutTTL:               soldOutTTL,
 	}
 
 	if config.DatabaseURL == "" {
@@ -135,6 +163,26 @@ func positiveIntFromEnv(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be a positive integer", key)
 	}
 	return parsed, nil
+}
+
+func redisTimeoutFromEnv(fallback time.Duration) (time.Duration, error) {
+	if value := os.Getenv("REDIS_TIMEOUT_MS"); value != "" {
+		ms, err := strconv.Atoi(value)
+		if err != nil || ms <= 0 {
+			return 0, fmt.Errorf("REDIS_TIMEOUT_MS must be a positive number of milliseconds")
+		}
+		return time.Duration(ms) * time.Millisecond, nil
+	}
+
+	if value := os.Getenv("REDIS_TIMEOUT"); value != "" {
+		seconds, err := strconv.Atoi(value)
+		if err != nil || seconds <= 0 {
+			return 0, fmt.Errorf("REDIS_TIMEOUT must be a positive number of seconds")
+		}
+		return time.Duration(seconds) * time.Second, nil
+	}
+
+	return fallback, nil
 }
 
 func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) {

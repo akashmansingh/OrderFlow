@@ -10,10 +10,16 @@ import (
 // Expiry releases inventory held by reservations whose hold has elapsed.
 type Expiry struct {
 	database *pgxpool.Pool
+	cache    inventoryCache
 }
 
 func NewExpiry(database *pgxpool.Pool) *Expiry {
 	return &Expiry{database: database}
+}
+
+func (expiry *Expiry) WithCache(cache inventoryCache) *Expiry {
+	expiry.cache = cache
+	return expiry
 }
 
 // RunOnce expires one locked batch of held reservations.
@@ -60,6 +66,15 @@ func (expiry *Expiry) RunOnce(ctx context.Context) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit expiry transaction: %w", err)
+	}
+	if expiry.cache != nil {
+		cleared := make(map[string]struct{}, len(expired))
+		for _, reservation := range expired {
+			if _, exists := cleared[reservation.EventID]; !exists {
+				cleared[reservation.EventID] = struct{}{}
+				_ = expiry.cache.ClearSoldOut(ctx, reservation.EventID)
+			}
+		}
 	}
 	return nil
 }

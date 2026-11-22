@@ -84,7 +84,7 @@ func (service *fakeReservationService) GetReservationForCustomer(_ context.Conte
 
 func newTestServer(reservations *fakeReservationService, authenticator *fakeAuthenticator) *httpapi.Server {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return httpapi.NewServer(nil, reservations, authenticator, logger)
+	return httpapi.NewServer(nil, reservations, authenticator, nil, 0, 0, logger)
 }
 
 func performRequest(t *testing.T, handler http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {

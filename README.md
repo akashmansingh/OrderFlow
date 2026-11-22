@@ -31,13 +31,13 @@ Open pgAdmin at `http://localhost:5050`. The Compose pgAdmin service connects to
 | `GET` | `/healthz` | Public | Process health |
 | `GET` | `/readyz` | Public | PostgreSQL readiness |
 | `POST` | `/v1/auth/register` | Public | Create a user with email and bcrypt password |
-| `POST` | `/v1/auth/login` | Public | Receive a short-lived Bearer access token |
+| `POST` | `/v1/auth/login` | Public | Receive a short-lived Bearer access token (rate limited: 5 req/min) |
 | `POST` | `/v1/events` | Bearer | Create a ticketed event |
 | `GET` | `/v1/events/{eventID}` | Bearer | Read capacity and availability state |
-| `POST` | `/v1/events/{eventID}/reservations` | Bearer | Create a held reservation; requires `Idempotency-Key` |
+| `POST` | `/v1/events/{eventID}/reservations` | Bearer | Create a held reservation; requires `Idempotency-Key` (rate limited: 10 req/min) |
 | `GET` | `/v1/reservations/{reservationID}` | Bearer | Read your asynchronous reservation status |
 
-Register with `{"email":"user@example.com","password":"correct horse battery"}`, log in with the same credentials, then send `Authorization: Bearer <access_token>` on protected routes. The access token subject becomes the reservation `customer_id`; a client-supplied `customer_id` is rejected.
+Register with `{"email":"user@example.com","password":"correct horse battery"}`, log in with the same credentials, then send `Authorization: Bearer <access_token>` on protected routes. The access token subject becomes the reservation `customer_id`; a client-supplied `customer_id` is rejected. Redis enforces sliding-window rate limits and fast-fails sold-out inventory checks, failing open if Redis is unavailable.
 
 ## Services
 
@@ -46,7 +46,7 @@ Register with `{"email":"user@example.com","password":"correct horse battery"}`,
 | API | `http://localhost:8080` | Reservation HTTP API |
 | PostgreSQL | `localhost:5433` | Authoritative data and outbox |
 | pgAdmin | `http://localhost:5050` | Database administration |
-| Redis | `localhost:6379` | Future holds/cache and rate-limit support |
+| Redis | `localhost:6379` | Fast-path sold-out cache and rate-limiting |
 | Redpanda | `localhost:19092` | Kafka-compatible event broker |
 | Worker | Compose-only | Outbox relay, consumer, payment simulation, expiry |
 
@@ -56,6 +56,7 @@ Register with `{"email":"user@example.com","password":"correct horse battery"}`,
 - [Local Docker and pgAdmin setup](docs/local-development.md)
 - [Testing](docs/testing.md)
 - [JWT authentication ADR](docs/decisions/0001-jwt-authentication.md)
+- [Redis caching and rate limiting ADR](docs/decisions/0002-redis-caching-and-rate-limiting.md)
 - [CI/CD and VM deployment](docs/deployment.md)
 - [Repository instructions](AGENTS.md)
 

@@ -50,6 +50,16 @@ The services are bound to `127.0.0.1`, so they are not exposed to other machines
 | Redis | `localhost:6379` | Holds and rate-limiting support |
 | Redpanda | `localhost:19092` | Kafka-compatible local broker |
 
+## Redis rate limiting and caching
+
+Redis accelerates sold-out checks and enforces sliding-window rate limiting on sensitive HTTP endpoints:
+- `POST /v1/auth/login`: limited by client IP (`RATE_LIMIT_LOGIN_PER_MINUTE`, default 5 req/min).
+- `POST /v1/events/{id}/reservations`: limited by user token subject or IP (`RATE_LIMIT_RESERVATION_PER_MINUTE`, default 10 req/min).
+
+Rate-limited requests receive HTTP `429 Too Many Requests` with `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` headers.
+
+If Redis stops or becomes unreachable, the rate limiter fails open (logs a warning and allows traffic through) and the reservation service falls back directly to PostgreSQL.
+
 ## Register PostgreSQL in pgAdmin
 
 1. Open `http://localhost:5050`.

@@ -18,14 +18,24 @@ const (
 	paymentReject  = "reject"
 )
 
+type inventoryCache interface {
+	ClearSoldOut(ctx context.Context, eventID string) error
+}
+
 // Processor applies held reservation events to authoritative PostgreSQL state.
 type Processor struct {
 	database      *pgxpool.Pool
 	paymentResult string
+	cache         inventoryCache
 }
 
 func NewProcessor(database *pgxpool.Pool, paymentResult string) *Processor {
 	return &Processor{database: database, paymentResult: paymentResult}
+}
+
+func (processor *Processor) WithCache(cache inventoryCache) *Processor {
+	processor.cache = cache
+	return processor
 }
 
 // Handle processes a single event with at-least-once delivery safety.
@@ -92,7 +102,13 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 	if err := transitionReservation(ctx, tx, payload, finalStatus, reason); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if (finalStatus == "cancelled" || finalStatus == "expired") && processor.cache != nil {
+		_ = processor.cache.ClearSoldOut(ctx, payload.EventID)
+	}
+	return nil
 }
 
 func transitionReservation(ctx context.Context, tx pgx.Tx, payload HeldReservation, status, reason string) error {
