@@ -35,6 +35,13 @@ func (server *Server) rateLimit(limit int, window time.Duration, keyFunc func(*h
 			response.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 
 			if !allowed {
+				if server.metrics != nil {
+					endpoint := request.Pattern
+					if endpoint == "" {
+						endpoint = request.URL.Path
+					}
+					server.metrics.RateLimitRejectedTotal.WithLabelValues(endpoint).Inc()
+				}
 				retrySeconds := int(math.Ceil(retryAfter.Seconds()))
 				if retrySeconds <= 0 {
 					retrySeconds = 1

@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/theRiddler9/OrderFlow/internal/auth"
+	"github.com/theRiddler9/OrderFlow/internal/metrics"
 	"github.com/theRiddler9/OrderFlow/internal/reservation"
 )
 
@@ -36,6 +40,7 @@ type Server struct {
 	loginLimit       int
 	reservationLimit int
 	logger           *slog.Logger
+	metrics          *metrics.Metrics
 	handler          http.Handler
 }
 
@@ -59,23 +64,76 @@ func NewServer(
 		logger:           logger,
 	}
 
+	server.buildRoutes()
+	return server
+}
+
+// WithMetrics attaches a Prometheus metrics collector to the server.
+func (server *Server) WithMetrics(m *metrics.Metrics) *Server {
+	server.metrics = m
+	server.buildRoutes()
+	return server
+}
+
+func (server *Server) buildRoutes() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.ready)
+	mux.HandleFunc("GET /metrics", server.metricsHandler)
 	mux.HandleFunc("POST /v1/auth/register", server.register)
-	mux.Handle("POST /v1/auth/login", server.rateLimit(loginLimit, time.Minute, loginKey)(http.HandlerFunc(server.login)))
+	mux.Handle("POST /v1/auth/login", server.rateLimit(server.loginLimit, time.Minute, loginKey)(http.HandlerFunc(server.login)))
 	mux.Handle("POST /v1/events", server.requireAuth(http.HandlerFunc(server.createEvent)))
 	mux.Handle("GET /v1/events/{eventID}", server.requireAuth(http.HandlerFunc(server.getEvent)))
-	mux.Handle("POST /v1/events/{eventID}/reservations", server.requireAuth(server.rateLimit(reservationLimit, time.Minute, reservationKey)(http.HandlerFunc(server.createReservation))))
+	mux.Handle("POST /v1/events/{eventID}/reservations", server.requireAuth(server.rateLimit(server.reservationLimit, time.Minute, reservationKey)(http.HandlerFunc(server.createReservation))))
 	mux.Handle("GET /v1/reservations/{reservationID}", server.requireAuth(http.HandlerFunc(server.getReservation)))
-	server.handler = server.recoverPanics(server.logRequests(mux))
-
-	return server
+	server.handler = server.recoverPanics(server.instrument(server.logRequests(mux)))
 }
 
 // Handler returns the HTTP handler used by the process entry point and tests.
 func (server *Server) Handler() http.Handler {
 	return server.handler
+}
+
+func (server *Server) metricsHandler(response http.ResponseWriter, request *http.Request) {
+	if server.metrics != nil && server.metrics.Registry != nil {
+		if gatherer, ok := server.metrics.Registry.(prometheus.Gatherer); ok {
+			promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}).ServeHTTP(response, request)
+			return
+		}
+	}
+	promhttp.Handler().ServeHTTP(response, request)
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rec *statusRecorder) WriteHeader(code int) {
+	rec.statusCode = code
+	rec.ResponseWriter.WriteHeader(code)
+}
+
+func (server *Server) instrument(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if server.metrics == nil || request.URL.Path == "/metrics" {
+			next.ServeHTTP(response, request)
+			return
+		}
+
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: response, statusCode: http.StatusOK}
+		next.ServeHTTP(rec, request)
+		duration := time.Since(start).Seconds()
+
+		pattern := request.Pattern
+		if pattern == "" {
+			pattern = request.URL.Path
+		}
+
+		server.metrics.HTTPRequestsTotal.WithLabelValues(request.Method, pattern, strconv.Itoa(rec.statusCode)).Inc()
+		server.metrics.HTTPRequestDuration.WithLabelValues(request.Method, pattern).Observe(duration)
+	})
 }
 
 func (server *Server) health(response http.ResponseWriter, _ *http.Request) {
