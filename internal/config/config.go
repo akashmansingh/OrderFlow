@@ -35,6 +35,8 @@ type Config struct {
 	SoldOutFastPath               bool
 	RateLimitEnabled              bool
 	LoadTestMode                  bool
+	OTLPEndpoint                  string
+	TracingEnabled                bool
 }
 
 // Load reads configuration shared by the API and worker.
@@ -95,6 +97,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	tracingEnabled, err := boolFromEnv("ORDERFLOW_TRACING_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
 
 	config := Config{
 		Environment:                   valueOrDefault("APP_ENV", "development"),
@@ -121,6 +127,8 @@ func Load() (Config, error) {
 		SoldOutFastPath:               soldOutFastPath,
 		RateLimitEnabled:              rateLimitEnabled,
 		LoadTestMode:                  loadTestMode,
+		OTLPEndpoint:                  strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
+		TracingEnabled:                tracingEnabled,
 	}
 
 	if config.Environment == "production" && config.LoadTestMode {
