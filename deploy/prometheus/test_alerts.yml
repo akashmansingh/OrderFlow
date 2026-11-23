@@ -1,0 +1,107 @@
+rule_files:
+  - recording_rules.yml
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # 1. TargetDown fires when up == 0 for 1m
+  - interval: 1m
+    input_series:
+      - series: 'up{job="orderflow-api", instance="api:8080"}'
+        values: '1 0 0 0 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: TargetDown
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: orderflow-api
+              instance: "api:8080"
+            exp_annotations:
+              summary: "Target orderflow-api is down"
+              description: "Service instance api:8080 of job orderflow-api has been unreachable for more than 1 minute."
+              runbook_url: "docs/runbooks/target-down.md"
+      - eval_time: 4m
+        alertname: TargetDown
+        exp_alerts: []
+
+  # 2. AbsentMetric fires when core metric missing for 2m
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AbsentMetric
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: AbsentMetric
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Core metric orderflow_http_requests_total is absent"
+              description: "The HTTP request counter metric is missing from the Prometheus scrape target, indicating the service is failing to export metrics or crashed."
+              runbook_url: "docs/runbooks/metric-absent.md"
+
+  # 3. StuckSagas fires when oldest row age > 30s for 1m
+  - interval: 1m
+    input_series:
+      - series: 'orderflow_outbox_oldest_row_age_seconds'
+        values: '10 45 60 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StuckSagas
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: StuckSagas
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Sagas stuck in pending/outbox state"
+              description: "The oldest pending reservation outbox record has been waiting for 60s (> 30s threshold)."
+              runbook_url: "docs/runbooks/stuck-sagas.md"
+      - eval_time: 3m
+        alertname: StuckSagas
+        exp_alerts: []
+
+  # 4. DeadLetterQueueActive fires when dlq events > 0 for 1m
+  - interval: 1m
+    input_series:
+      - series: 'orderflow_worker_dlq_events_total{event_type="reservation.held.v1", reason="poison_payload"}'
+        values: '0 5 10 10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: DeadLetterQueueActive
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: DeadLetterQueueActive
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Unrecoverable poison events routing to Dead-Letter Queue"
+              description: "Events are failing terminal processing and being redirected to the DLQ."
+              runbook_url: "docs/runbooks/dead-letter-queue-active.md"
+
+  # 5. OutboxStagnation fires when backlog > 100 for 2m
+  - interval: 1m
+    input_series:
+      - series: 'orderflow_outbox_backlog_records'
+        values: '50 150 200 250'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: OutboxStagnation
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: OutboxStagnation
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Transactional outbox backlog exceeding threshold"
+              description: "Transactional outbox backlog has 250 pending events (> 100 threshold)."
+              runbook_url: "docs/runbooks/outbox-stagnation.md"
