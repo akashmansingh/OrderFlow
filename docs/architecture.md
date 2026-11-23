@@ -75,8 +75,9 @@ The exact endpoint and event schemas are established in API/event contract docum
 
 ## Reliability and security
 
-- Use bounded timeouts, graceful shutdown, health/readiness endpoints, structured logs, request IDs, and Prometheus metrics.
+- Use bounded timeouts, graceful shutdown, health/readiness endpoints, structured logs, request IDs, Prometheus metrics, and OpenTelemetry distributed tracing with W3C TraceContext propagation.
 - Measure API latency/error rate, outbox backlog, consumer lag, retry/dead-letter counts, reservation outcomes, and Redis behavior.
+- Distributed traces correlate end-to-end reservation flows from the HTTP API, across the PostgreSQL outbox and Redpanda broker, into the saga worker and terminal transitions in Jaeger.
 - Keep secrets in environment/secret configuration, never in source control or logs. Restrict database and broker ports in the public deployment; terminate HTTPS at the reverse proxy.
 - Backups and restore steps must be documented for the deployed PostgreSQL data.
 - Do not claim exactly-once messaging, multi-region resilience, or high availability.
