@@ -89,11 +89,16 @@ func run(logger *slog.Logger) error {
 	metricsCollector := metrics.New(nil)
 	metricsCollector.RegisterPoolStats(databasePool, "api")
 
+	var limiter httpapi.RateLimiter
+	if redisClient != nil {
+		limiter = redisClient
+	}
+
 	api := httpapi.NewServer(
 		databasePool,
 		reservationService,
 		authService,
-		redisClient,
+		limiter,
 		configuration.RateLimitLoginPerMinute,
 		configuration.RateLimitReservationPerMinute,
 		logger,

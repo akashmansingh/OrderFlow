@@ -63,11 +63,17 @@ func (c *Client) WithMetrics(m *metrics.Metrics) *Client {
 
 // Close terminates the underlying Redis connections.
 func (c *Client) Close() error {
+	if c == nil || c.rdb == nil {
+		return nil
+	}
 	return c.rdb.Close()
 }
 
 // Ping checks if the Redis server is reachable.
 func (c *Client) Ping(ctx context.Context) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("redis client is nil")
+	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	return c.rdb.Ping(timeoutCtx).Err()
@@ -75,6 +81,10 @@ func (c *Client) Ping(ctx context.Context) error {
 
 // IsSoldOut checks if an event is currently cached as sold out.
 func (c *Client) IsSoldOut(ctx context.Context, eventID string) (bool, error) {
+	if c == nil || c.rdb == nil {
+		return false, nil
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -107,6 +117,9 @@ func (c *Client) IsSoldOut(ctx context.Context, eventID string) (bool, error) {
 
 // MarkSoldOut caches an event as sold out for the specified duration.
 func (c *Client) MarkSoldOut(ctx context.Context, eventID string, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return nil
+	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -120,6 +133,9 @@ func (c *Client) MarkSoldOut(ctx context.Context, eventID string, ttl time.Durat
 
 // ClearSoldOut removes the sold out cache for an event.
 func (c *Client) ClearSoldOut(ctx context.Context, eventID string) error {
+	if c == nil || c.rdb == nil {
+		return nil
+	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -174,6 +190,10 @@ return {1, remaining, 0}
 // Allow executes an atomic sliding-window rate limit check using a server-side Lua script.
 // On Redis errors, it fails open: returns allowed=true and logs a warning.
 func (c *Client) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, int, time.Duration, error) {
+	if c == nil || c.rdb == nil {
+		return true, limit, 0, nil
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 

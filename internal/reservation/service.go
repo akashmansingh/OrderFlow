@@ -33,6 +33,7 @@ type Event struct {
 	Capacity          int       `json:"capacity"`
 	HeldQuantity      int       `json:"held_quantity"`
 	ConfirmedQuantity int       `json:"confirmed_quantity"`
+	Available         int       `json:"available"`
 }
 
 type Reservation struct {
@@ -148,6 +149,37 @@ func (service *Service) GetEvent(ctx context.Context, eventID string) (Event, er
 		return Event{}, err
 	}
 	return val.(Event), nil
+}
+
+func (service *Service) ListEvents(ctx context.Context) ([]Event, error) {
+	const query = `
+		SELECT id, name, starts_at, capacity, held_quantity, confirmed_quantity
+		FROM events
+		ORDER BY starts_at ASC, name ASC`
+
+	rows, err := service.database.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make([]Event, 0)
+	for rows.Next() {
+		var event Event
+		if err := rows.Scan(
+			&event.ID,
+			&event.Name,
+			&event.StartsAt,
+			&event.Capacity,
+			&event.HeldQuantity,
+			&event.ConfirmedQuantity,
+		); err != nil {
+			return nil, err
+		}
+		event.Available = event.Capacity - (event.HeldQuantity + event.ConfirmedQuantity)
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 func (service *Service) CreateReservation(ctx context.Context, input CreateReservationInput) (Reservation, error) {
@@ -358,6 +390,9 @@ func scanEvent(row rowScanner) (Event, error) {
 		&event.HeldQuantity,
 		&event.ConfirmedQuantity,
 	)
+	if err == nil {
+		event.Available = event.Capacity - (event.HeldQuantity + event.ConfirmedQuantity)
+	}
 	return event, err
 }
 

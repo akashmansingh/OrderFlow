@@ -215,6 +215,42 @@ func TestReservationStatusIsOwnedByAuthenticatedUser(t *testing.T) {
 	}
 }
 
+func TestListEvents(t *testing.T) {
+	requireE2E(t)
+
+	_, token := registerAndLogin(t)
+	created := createEvent(t, token.AccessToken, 10)
+
+	resp := authenticatedRequest(t, token.AccessToken, http.MethodGet, "/v1/events", nil, nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list events status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var events []struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Capacity  int    `json:"capacity"`
+		Available int    `json:"available"`
+	}
+	decodeJSON(t, resp.Body, &events)
+
+	found := false
+	for _, e := range events {
+		if e.ID == created.ID {
+			found = true
+			if e.Available != 10 {
+				t.Errorf("event available = %d, want 10", e.Available)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("created event %s not found in list", created.ID)
+	}
+}
+
 func TestRateLimitingLoginEndpoint(t *testing.T) {
 	requireE2E(t)
 

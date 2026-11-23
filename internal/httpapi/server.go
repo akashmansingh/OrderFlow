@@ -21,6 +21,7 @@ import (
 type reservationService interface {
 	CreateEvent(context.Context, reservation.CreateEventInput) (reservation.Event, error)
 	GetEvent(context.Context, string) (reservation.Event, error)
+	ListEvents(context.Context) ([]reservation.Event, error)
 	CreateReservation(context.Context, reservation.CreateReservationInput) (reservation.Reservation, error)
 	GetReservationForCustomer(context.Context, string, string) (reservation.Reservation, error)
 }
@@ -32,7 +33,8 @@ type authenticator interface {
 	VerifyAccessToken(string) (string, error)
 }
 
-// Server exposes the HTTP interface for the reservation API.
+// RateLimiter is the rate limiting behavior required by the HTTP layer.
+type RateLimiter = rateLimiter
 type Server struct {
 	database         *pgxpool.Pool
 	service          reservationService
@@ -93,10 +95,11 @@ func (server *Server) buildRoutes() {
 	mux.HandleFunc("POST /v1/auth/register", server.register)
 	mux.Handle("POST /v1/auth/login", server.rateLimit(server.loginLimit, time.Minute, loginKey)(http.HandlerFunc(server.login)))
 	mux.Handle("POST /v1/events", server.requireAuth(http.HandlerFunc(server.createEvent)))
+	mux.Handle("GET /v1/events", server.requireAuth(http.HandlerFunc(server.listEvents)))
 	mux.Handle("GET /v1/events/{eventID}", server.requireAuth(http.HandlerFunc(server.getEvent)))
 	mux.Handle("POST /v1/events/{eventID}/reservations", server.requireAuth(server.rateLimit(server.reservationLimit, time.Minute, reservationKey)(http.HandlerFunc(server.createReservation))))
 	mux.Handle("GET /v1/reservations/{reservationID}", server.requireAuth(http.HandlerFunc(server.getReservation)))
-	server.handler = server.recoverPanics(TracingMiddleware(server.instrument(server.logRequests(mux))))
+	server.handler = server.recoverPanics(server.cors(TracingMiddleware(server.instrument(server.logRequests(mux)))))
 }
 
 // Handler returns the HTTP handler used by the process entry point and tests.

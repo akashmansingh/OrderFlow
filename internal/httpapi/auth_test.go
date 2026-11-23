@@ -63,6 +63,10 @@ func (service *fakeReservationService) GetEvent(context.Context, string) (reserv
 	return reservation.Event{}, nil
 }
 
+func (service *fakeReservationService) ListEvents(context.Context) ([]reservation.Event, error) {
+	return nil, nil
+}
+
 func (service *fakeReservationService) CreateReservation(_ context.Context, input reservation.CreateReservationInput) (reservation.Reservation, error) {
 	service.createdInputs = append(service.createdInputs, input)
 	if service.createdReservation.ID != "" {

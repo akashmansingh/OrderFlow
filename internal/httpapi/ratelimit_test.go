@@ -277,6 +277,10 @@ func (s *stubRes) GetEvent(ctx context.Context, id string) (reservation.Event, e
 	return reservation.Event{ID: id}, nil
 }
 
+func (s *stubRes) ListEvents(ctx context.Context) ([]reservation.Event, error) {
+	return []reservation.Event{}, nil
+}
+
 func (s *stubRes) CreateReservation(ctx context.Context, in reservation.CreateReservationInput) (reservation.Reservation, error) {
 	return reservation.Reservation{ID: "res-1", EventID: in.EventID, CustomerID: in.CustomerID, Quantity: in.Quantity, Status: "held"}, nil
 }

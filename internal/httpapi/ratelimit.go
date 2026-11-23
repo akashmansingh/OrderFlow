@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -15,10 +16,18 @@ type rateLimiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, int, time.Duration, error)
 }
 
+func isNilLimiter(l rateLimiter) bool {
+	if l == nil {
+		return true
+	}
+	val := reflect.ValueOf(l)
+	return val.Kind() == reflect.Pointer && val.IsNil()
+}
+
 func (server *Server) rateLimit(limit int, window time.Duration, keyFunc func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			if !server.rateLimitEnabled || server.limiter == nil || limit <= 0 {
+			if !server.rateLimitEnabled || isNilLimiter(server.limiter) || limit <= 0 {
 				next.ServeHTTP(response, request)
 				return
 			}

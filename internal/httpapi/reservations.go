@@ -54,6 +54,19 @@ func (server *Server) getEvent(response http.ResponseWriter, request *http.Reque
 	writeJSON(response, http.StatusOK, event)
 }
 
+func (server *Server) listEvents(response http.ResponseWriter, request *http.Request) {
+	events, err := server.service.ListEvents(request.Context())
+	if err != nil {
+		server.writeServiceError(response, err)
+		return
+	}
+	if events == nil {
+		events = make([]reservation.Event, 0)
+	}
+
+	writeJSON(response, http.StatusOK, events)
+}
+
 func (server *Server) createReservation(response http.ResponseWriter, request *http.Request) {
 	idempotencyKey := request.Header.Get("Idempotency-Key")
 	if idempotencyKey == "" {
