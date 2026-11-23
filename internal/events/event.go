@@ -16,6 +16,39 @@ type Envelope struct {
 	AggregateID string          `json:"aggregate_id"`
 	OccurredAt  time.Time       `json:"occurred_at"`
 	Payload     json.RawMessage `json:"payload"`
+	TraceParent string          `json:"traceparent,omitempty"`
+	TraceState  string          `json:"tracestate,omitempty"`
+}
+
+// GetTraceParent returns the W3C traceparent string, checking the field directly
+// or extracting from the payload JSON if present.
+func (event Envelope) GetTraceParent() string {
+	if event.TraceParent != "" {
+		return event.TraceParent
+	}
+	if len(event.Payload) > 0 {
+		var p struct {
+			TraceParent string `json:"traceparent"`
+		}
+		_ = json.Unmarshal(event.Payload, &p)
+		return p.TraceParent
+	}
+	return ""
+}
+
+// GetTraceState returns the W3C tracestate string if present.
+func (event Envelope) GetTraceState() string {
+	if event.TraceState != "" {
+		return event.TraceState
+	}
+	if len(event.Payload) > 0 {
+		var p struct {
+			TraceState string `json:"tracestate"`
+		}
+		_ = json.Unmarshal(event.Payload, &p)
+		return p.TraceState
+	}
+	return ""
 }
 
 // ParseEnvelope decodes and validates one event message.

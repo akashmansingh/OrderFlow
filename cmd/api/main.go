@@ -17,6 +17,7 @@ import (
 	"github.com/theRiddler9/OrderFlow/internal/httpapi"
 	"github.com/theRiddler9/OrderFlow/internal/metrics"
 	"github.com/theRiddler9/OrderFlow/internal/reservation"
+	"github.com/theRiddler9/OrderFlow/internal/tracing"
 )
 
 func main() {
@@ -46,6 +47,22 @@ func run(logger *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if configuration.TracingEnabled && configuration.OTLPEndpoint != "" {
+		shutdownTracer, err := tracing.Init(ctx, "orderflow-api", configuration.OTLPEndpoint)
+		if err != nil {
+			logger.Warn("distributed tracing initialization failed, falling back to no-op", "error", err)
+		} else {
+			defer func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = shutdownTracer(shutdownCtx)
+			}()
+			logger.Info("distributed tracing initialized", "endpoint", configuration.OTLPEndpoint)
+		}
+	} else {
+		_, _ = tracing.Init(ctx, "orderflow-api", "")
+	}
 
 	databasePool, err := database.Connect(ctx, configuration.DatabaseURL, configuration.DatabaseTimeout)
 	if err != nil {

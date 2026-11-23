@@ -95,7 +95,7 @@ func (server *Server) buildRoutes() {
 	mux.Handle("GET /v1/events/{eventID}", server.requireAuth(http.HandlerFunc(server.getEvent)))
 	mux.Handle("POST /v1/events/{eventID}/reservations", server.requireAuth(server.rateLimit(server.reservationLimit, time.Minute, reservationKey)(http.HandlerFunc(server.createReservation))))
 	mux.Handle("GET /v1/reservations/{reservationID}", server.requireAuth(http.HandlerFunc(server.getReservation)))
-	server.handler = server.recoverPanics(server.instrument(server.logRequests(mux)))
+	server.handler = server.recoverPanics(TracingMiddleware(server.instrument(server.logRequests(mux))))
 }
 
 // Handler returns the HTTP handler used by the process entry point and tests.

@@ -35,14 +35,23 @@ func (publisher *Publisher) Publish(ctx context.Context, event events.Envelope) 
 	if err != nil {
 		return fmt.Errorf("encode event %s: %w", event.ID, err)
 	}
+
+	headers := []kgo.RecordHeader{
+		{Key: "event_id", Value: []byte(event.ID)},
+		{Key: "event_type", Value: []byte(event.Type)},
+	}
+	if tp := event.GetTraceParent(); tp != "" {
+		headers = append(headers, kgo.RecordHeader{Key: "traceparent", Value: []byte(tp)})
+	}
+	if ts := event.GetTraceState(); ts != "" {
+		headers = append(headers, kgo.RecordHeader{Key: "tracestate", Value: []byte(ts)})
+	}
+
 	result := publisher.client.ProduceSync(ctx, &kgo.Record{
-		Topic: publisher.topic,
-		Key:   []byte(event.ID),
-		Value: value,
-		Headers: []kgo.RecordHeader{
-			{Key: "event_id", Value: []byte(event.ID)},
-			{Key: "event_type", Value: []byte(event.Type)},
-		},
+		Topic:   publisher.topic,
+		Key:     []byte(event.ID),
+		Value:   value,
+		Headers: headers,
 	})
 	if err := result.FirstErr(); err != nil {
 		return fmt.Errorf("produce event %s: %w", event.ID, err)

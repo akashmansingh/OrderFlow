@@ -10,8 +10,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/theRiddler9/OrderFlow/internal/events"
 	"github.com/theRiddler9/OrderFlow/internal/metrics"
+	"github.com/theRiddler9/OrderFlow/internal/tracing"
 )
 
 const (
@@ -48,6 +53,16 @@ func (processor *Processor) WithMetrics(m *metrics.Metrics) *Processor {
 
 // Handle processes a single event with at-least-once delivery safety.
 func (processor *Processor) Handle(ctx context.Context, event events.Envelope) error {
+	tr := tracing.Tracer("orderflow.workflow")
+	ctx, span := tr.Start(ctx, "workflow.ProcessSaga",
+		trace.WithAttributes(
+			attribute.String("reservation.id", event.AggregateID),
+			attribute.String("event.type", event.Type),
+			attribute.String("payment.simulation", processor.paymentResult),
+		),
+	)
+	defer span.End()
+
 	start := time.Now()
 	defer func() {
 		if processor.metrics != nil {
@@ -119,11 +134,17 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 	}
 
 	if err := transitionReservation(ctx, tx, payload, finalStatus, reason); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
+	span.SetAttributes(attribute.String("reservation.final_status", finalStatus))
+	span.SetStatus(codes.Ok, "saga transition committed")
 	if processor.metrics != nil {
 		processor.metrics.WorkerEventsProcessedTotal.WithLabelValues(event.Type, finalStatus).Inc()
 		processor.metrics.SagaLatencySeconds.WithLabelValues(finalStatus).Observe(time.Since(createdAt).Seconds())
@@ -156,14 +177,21 @@ func transitionReservation(ctx context.Context, tx pgx.Tx, payload HeldReservati
 	}
 
 	eventType := "reservation." + status + ".v1"
-	terminalPayload, err := json.Marshal(map[string]any{
+	terminalPayloadMap := map[string]any{
 		"reservation_id": payload.ReservationID,
 		"event_id":       payload.EventID,
 		"customer_id":    payload.CustomerID,
 		"quantity":       payload.Quantity,
 		"status":         status,
 		"reason":         nullableReason(reason),
-	})
+	}
+	if tp, ts := tracing.InjectTraceParent(ctx); tp != "" {
+		terminalPayloadMap["traceparent"] = tp
+		if ts != "" {
+			terminalPayloadMap["tracestate"] = ts
+		}
+	}
+	terminalPayload, err := json.Marshal(terminalPayloadMap)
 	if err != nil {
 		return fmt.Errorf("encode terminal event: %w", err)
 	}
