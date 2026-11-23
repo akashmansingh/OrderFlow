@@ -18,7 +18,7 @@ type rateLimiter interface {
 func (server *Server) rateLimit(limit int, window time.Duration, keyFunc func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-			if server.limiter == nil || limit <= 0 {
+			if !server.rateLimitEnabled || server.limiter == nil || limit <= 0 {
 				next.ServeHTTP(response, request)
 				return
 			}
@@ -35,6 +35,13 @@ func (server *Server) rateLimit(limit int, window time.Duration, keyFunc func(*h
 			response.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 
 			if !allowed {
+				if server.metrics != nil {
+					endpoint := request.Pattern
+					if endpoint == "" {
+						endpoint = request.URL.Path
+					}
+					server.metrics.RateLimitRejectedTotal.WithLabelValues(endpoint).Inc()
+				}
 				retrySeconds := int(math.Ceil(retryAfter.Seconds()))
 				if retrySeconds <= 0 {
 					retrySeconds = 1

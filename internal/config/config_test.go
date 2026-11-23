@@ -154,3 +154,64 @@ func TestLoadAPIReadsJWTSettings(t *testing.T) {
 		t.Fatalf("JWT issuer/audience = %q/%q", loaded.JWTIssuer, loaded.JWTAudience)
 	}
 }
+
+func TestLoadFeatureFlagsDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
+	t.Setenv("ORDERFLOW_CACHE_ENABLED", "")
+	t.Setenv("ORDERFLOW_SOLDOUT_FASTPATH", "")
+	t.Setenv("ORDERFLOW_RATE_LIMIT_ENABLED", "")
+	t.Setenv("LOAD_TEST_MODE", "")
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !loaded.CacheEnabled {
+		t.Errorf("CacheEnabled = false, want default true")
+	}
+	if !loaded.SoldOutFastPath {
+		t.Errorf("SoldOutFastPath = false, want default true")
+	}
+	if !loaded.RateLimitEnabled {
+		t.Errorf("RateLimitEnabled = false, want default true")
+	}
+	if loaded.LoadTestMode {
+		t.Errorf("LoadTestMode = true, want default false")
+	}
+}
+
+func TestLoadFeatureFlagsCustom(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
+	t.Setenv("ORDERFLOW_CACHE_ENABLED", "false")
+	t.Setenv("ORDERFLOW_SOLDOUT_FASTPATH", "false")
+	t.Setenv("ORDERFLOW_RATE_LIMIT_ENABLED", "false")
+	t.Setenv("LOAD_TEST_MODE", "true")
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.CacheEnabled {
+		t.Errorf("CacheEnabled = true, want false")
+	}
+	if loaded.SoldOutFastPath {
+		t.Errorf("SoldOutFastPath = true, want false")
+	}
+	if loaded.RateLimitEnabled {
+		t.Errorf("RateLimitEnabled = true, want false")
+	}
+	if !loaded.LoadTestMode {
+		t.Errorf("LoadTestMode = false, want true")
+	}
+}
+
+func TestLoadRejectsLoadTestModeInProduction(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("LOAD_TEST_MODE", "true")
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "LOAD_TEST_MODE") {
+		t.Fatalf("Load() error = %v, want error rejecting LOAD_TEST_MODE in production", err)
+	}
+}

@@ -7,32 +7,112 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/theRiddler9/OrderFlow/internal/events"
+	"github.com/theRiddler9/OrderFlow/internal/metrics"
+	"github.com/theRiddler9/OrderFlow/internal/workflow"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 func TestHandleRecordCommitsAfterSuccessfulHandling(t *testing.T) {
 	committer := &recordCommitter{}
+	dlq := &stubDLQPublisher{}
 	handler := handlerFunc(func(context.Context, events.Envelope) error { return nil })
 
-	if err := handleRecord(context.Background(), handler, committer, heldRecord(t)); err != nil {
+	if err := handleRecord(context.Background(), handler, committer, dlq, nil, nil, heldRecord(t)); err != nil {
 		t.Fatalf("handleRecord() error = %v", err)
 	}
 	if committer.calls != 1 {
 		t.Fatalf("CommitRecords calls = %d, want 1", committer.calls)
 	}
+	if len(dlq.published) != 0 {
+		t.Fatalf("DLQ calls = %d, want 0", len(dlq.published))
+	}
 }
 
-func TestHandleRecordDoesNotCommitAfterWorkflowFailure(t *testing.T) {
+func TestHandleRecordRoutesPoisonRecordToDLQAndCommits(t *testing.T) {
 	committer := &recordCommitter{}
-	handler := handlerFunc(func(context.Context, events.Envelope) error { return errors.New("database unavailable") })
+	dlq := &stubDLQPublisher{}
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+	handler := handlerFunc(func(context.Context, events.Envelope) error { return nil })
 
-	if err := handleRecord(context.Background(), handler, committer, heldRecord(t)); err == nil {
-		t.Fatal("handleRecord() error = nil, want handler error")
+	poisonRecord := &kgo.Record{Value: []byte("this is not valid json or envelope")}
+
+	if err := handleRecord(context.Background(), handler, committer, dlq, m, nil, poisonRecord); err != nil {
+		t.Fatalf("handleRecord() error = %v", err)
 	}
-	if committer.calls != 0 {
-		t.Fatalf("CommitRecords calls = %d, want 0", committer.calls)
+	if committer.calls != 1 {
+		t.Fatalf("expected commit to unblock partition, got calls = %d", committer.calls)
 	}
+	if len(dlq.published) != 1 {
+		t.Fatalf("expected 1 DLQ publish call, got %d", len(dlq.published))
+	}
+}
+
+func TestHandleRecordRetriesAndRoutesToDLQOnExhaustion(t *testing.T) {
+	committer := &recordCommitter{}
+	dlq := &stubDLQPublisher{}
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+
+	attempts := 0
+	handler := handlerFunc(func(context.Context, events.Envelope) error {
+		attempts++
+		return errors.New("transient database connection drop")
+	})
+
+	if err := handleRecord(context.Background(), handler, committer, dlq, m, nil, heldRecord(t)); err != nil {
+		t.Fatalf("handleRecord() error = %v", err)
+	}
+
+	// 1 initial attempt + 3 retries = 4 attempts
+	if attempts != 4 {
+		t.Fatalf("attempts = %d, want 4", attempts)
+	}
+	if committer.calls != 1 {
+		t.Fatalf("CommitRecords calls = %d, want 1 (to advance partition after DLQ)", committer.calls)
+	}
+	if len(dlq.published) != 1 {
+		t.Fatalf("DLQ calls = %d, want 1", len(dlq.published))
+	}
+}
+
+func TestHandleRecordRoutesPoisonDomainErrorToDLQ(t *testing.T) {
+	committer := &recordCommitter{}
+	dlq := &stubDLQPublisher{}
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+
+	attempts := 0
+	handler := handlerFunc(func(context.Context, events.Envelope) error {
+		attempts++
+		return workflow.ErrPoisonMessage
+	})
+
+	if err := handleRecord(context.Background(), handler, committer, dlq, m, nil, heldRecord(t)); err != nil {
+		t.Fatalf("handleRecord() error = %v", err)
+	}
+
+	// Poison error should NOT be retried
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 (poison errors should not retry)", attempts)
+	}
+	if committer.calls != 1 {
+		t.Fatalf("CommitRecords calls = %d, want 1", committer.calls)
+	}
+	if len(dlq.published) != 1 {
+		t.Fatalf("DLQ calls = %d, want 1", len(dlq.published))
+	}
+}
+
+type stubDLQPublisher struct {
+	published [][]byte
+}
+
+func (s *stubDLQPublisher) PublishDLQ(ctx context.Context, originalRecord []byte, reason string, retryCount int) error {
+	s.published = append(s.published, originalRecord)
+	return nil
 }
 
 type handlerFunc func(context.Context, events.Envelope) error

@@ -31,6 +31,10 @@ type Config struct {
 	RateLimitLoginPerMinute       int
 	RateLimitReservationPerMinute int
 	CacheSoldOutTTL               time.Duration
+	CacheEnabled                  bool
+	SoldOutFastPath               bool
+	RateLimitEnabled              bool
+	LoadTestMode                  bool
 }
 
 // Load reads configuration shared by the API and worker.
@@ -75,6 +79,22 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	cacheEnabled, err := boolFromEnv("ORDERFLOW_CACHE_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
+	soldOutFastPath, err := boolFromEnv("ORDERFLOW_SOLDOUT_FASTPATH", true)
+	if err != nil {
+		return Config{}, err
+	}
+	rateLimitEnabled, err := boolFromEnv("ORDERFLOW_RATE_LIMIT_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
+	loadTestMode, err := boolFromEnv("LOAD_TEST_MODE", false)
+	if err != nil {
+		return Config{}, err
+	}
 
 	config := Config{
 		Environment:                   valueOrDefault("APP_ENV", "development"),
@@ -97,6 +117,14 @@ func Load() (Config, error) {
 		RateLimitLoginPerMinute:       rateLimitLogin,
 		RateLimitReservationPerMinute: rateLimitReservation,
 		CacheSoldOutTTL:               soldOutTTL,
+		CacheEnabled:                  cacheEnabled,
+		SoldOutFastPath:               soldOutFastPath,
+		RateLimitEnabled:              rateLimitEnabled,
+		LoadTestMode:                  loadTestMode,
+	}
+
+	if config.Environment == "production" && config.LoadTestMode {
+		return Config{}, fmt.Errorf("cannot enable LOAD_TEST_MODE in production environment")
 	}
 
 	if config.DatabaseURL == "" {
@@ -205,4 +233,16 @@ func valueOrDefault(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+func boolFromEnv(key string, fallback bool) (bool, error) {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a valid boolean: %w", key, err)
+	}
+	return parsed, nil
 }

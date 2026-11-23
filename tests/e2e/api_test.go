@@ -53,6 +53,58 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestPrometheusMetricsEndpoint(t *testing.T) {
+	requireE2E(t)
+
+	// Issue a request to generate traffic
+	healthResp := request(t, http.MethodGet, "/healthz", nil, nil)
+	healthResp.Body.Close()
+
+	response := request(t, http.MethodGet, "/metrics", nil, nil)
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+
+	bodyBytes, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read /metrics body: %v", err)
+	}
+	body := string(bodyBytes)
+
+	requiredMetricPrefixes := []string{
+		"orderflow_http_requests_total",
+		"orderflow_http_request_duration_seconds",
+	}
+
+	for _, prefix := range requiredMetricPrefixes {
+		if !strings.Contains(body, prefix) {
+			t.Errorf("expected /metrics exposition to contain %q, but was missing", prefix)
+		}
+	}
+
+	// Trigger rate limit rejection to verify dynamic counter appearance
+	var b [2]byte
+	_, _ = rand.Read(b[:])
+	clientIP := fmt.Sprintf("198.51.%d.%d", b[0], b[1])
+	for i := 0; i < 6; i++ {
+		r := request(t, http.MethodPost, "/v1/auth/login", map[string]any{
+			"email":    "nonexistent@example.com",
+			"password": "wrong",
+		}, map[string]string{"X-Forwarded-For": clientIP})
+		r.Body.Close()
+	}
+
+	metricsResp2 := request(t, http.MethodGet, "/metrics", nil, nil)
+	defer metricsResp2.Body.Close()
+	bodyBytes2, _ := io.ReadAll(metricsResp2.Body)
+	body2 := string(bodyBytes2)
+	if !strings.Contains(body2, "orderflow_ratelimit_rejected_total") {
+		t.Errorf("expected orderflow_ratelimit_rejected_total after rate limiting, got:\n%s", body2)
+	}
+}
+
 func TestRegistrationAndLogin(t *testing.T) {
 	requireE2E(t)
 

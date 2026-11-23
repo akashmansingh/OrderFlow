@@ -60,15 +60,22 @@ type inventoryCache interface {
 }
 
 type Service struct {
-	database     *pgxpool.Pool
-	holdDuration time.Duration
-	cache        inventoryCache
-	soldOutTTL   time.Duration
-	sfGroup      singleflight.Group
+	database        *pgxpool.Pool
+	holdDuration    time.Duration
+	cache           inventoryCache
+	soldOutTTL      time.Duration
+	cacheEnabled    bool
+	soldOutFastPath bool
+	sfGroup         singleflight.Group
 }
 
 func NewService(database *pgxpool.Pool, holdDuration time.Duration) *Service {
-	return &Service{database: database, holdDuration: holdDuration}
+	return &Service{
+		database:        database,
+		holdDuration:    holdDuration,
+		cacheEnabled:    true,
+		soldOutFastPath: true,
+	}
 }
 
 func (service *Service) WithCache(cache inventoryCache, ttl time.Duration) *Service {
@@ -77,8 +84,15 @@ func (service *Service) WithCache(cache inventoryCache, ttl time.Duration) *Serv
 	return service
 }
 
+// WithFeatureFlags configures runtime toggles for caching and sold-out short-circuiting.
+func (service *Service) WithFeatureFlags(cacheEnabled, soldOutFastPath bool) *Service {
+	service.cacheEnabled = cacheEnabled
+	service.soldOutFastPath = soldOutFastPath
+	return service
+}
+
 func (service *Service) isSoldOut(ctx context.Context, eventID string) bool {
-	if service.cache == nil {
+	if !service.cacheEnabled || !service.soldOutFastPath || service.cache == nil {
 		return false
 	}
 	val, err, _ := service.sfGroup.Do("soldout:"+eventID, func() (any, error) {
@@ -161,7 +175,7 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 	}
 
 	if err := reserveInventory(ctx, tx, input.EventID, input.Quantity); err != nil {
-		if errors.Is(err, ErrInsufficientInventory) && service.cache != nil && service.soldOutTTL > 0 {
+		if errors.Is(err, ErrInsufficientInventory) && service.cacheEnabled && service.soldOutFastPath && service.cache != nil && service.soldOutTTL > 0 {
 			_ = service.cache.MarkSoldOut(ctx, input.EventID, service.soldOutTTL)
 		}
 		return Reservation{}, err

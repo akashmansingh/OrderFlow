@@ -82,3 +82,28 @@ func (store *PostgresStore) RecordPublishFailure(ctx context.Context, eventID st
 	}
 	return nil
 }
+
+// CountPending returns the number of outbox events waiting to be published.
+func (store *PostgresStore) CountPending(ctx context.Context) (int64, error) {
+	var count int64
+	err := store.database.QueryRow(ctx, `SELECT COUNT(*) FROM outbox_events WHERE published_at IS NULL`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count pending outbox events: %w", err)
+	}
+	return count, nil
+}
+
+// ReportBacklog returns both the pending count and the age in seconds of the oldest unpublished record.
+func (store *PostgresStore) ReportBacklog(ctx context.Context) (int64, float64, error) {
+	var count int64
+	var oldestAge float64
+	const query = `
+		SELECT COUNT(*), COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(occurred_at))), 0)
+		FROM outbox_events
+		WHERE published_at IS NULL`
+	err := store.database.QueryRow(ctx, query).Scan(&count, &oldestAge)
+	if err != nil {
+		return 0, 0, fmt.Errorf("report outbox backlog: %w", err)
+	}
+	return count, oldestAge, nil
+}

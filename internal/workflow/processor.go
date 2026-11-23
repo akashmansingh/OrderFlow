@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/theRiddler9/OrderFlow/internal/events"
+	"github.com/theRiddler9/OrderFlow/internal/metrics"
 )
 
 const (
@@ -27,6 +28,7 @@ type Processor struct {
 	database      *pgxpool.Pool
 	paymentResult string
 	cache         inventoryCache
+	metrics       *metrics.Metrics
 }
 
 func NewProcessor(database *pgxpool.Pool, paymentResult string) *Processor {
@@ -38,9 +40,25 @@ func (processor *Processor) WithCache(cache inventoryCache) *Processor {
 	return processor
 }
 
+// WithMetrics attaches a Prometheus metrics collector to the processor.
+func (processor *Processor) WithMetrics(m *metrics.Metrics) *Processor {
+	processor.metrics = m
+	return processor
+}
+
 // Handle processes a single event with at-least-once delivery safety.
 func (processor *Processor) Handle(ctx context.Context, event events.Envelope) error {
+	start := time.Now()
+	defer func() {
+		if processor.metrics != nil {
+			processor.metrics.WorkerEventDurationSeconds.WithLabelValues(event.Type).Observe(time.Since(start).Seconds())
+		}
+	}()
+
 	if isTerminalEvent(event.Type) {
+		if processor.metrics != nil {
+			processor.metrics.WorkerEventsProcessedTotal.WithLabelValues(event.Type, "ignored").Inc()
+		}
 		return nil
 	}
 	if event.Type != "reservation.held.v1" {
@@ -76,11 +94,12 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 
 	var status string
 	var expiresAt *time.Time
+	var createdAt time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT status, expires_at
+		SELECT status, expires_at, created_at
 		FROM reservations
 		WHERE id = $1
-		FOR UPDATE`, payload.ReservationID).Scan(&status, &expiresAt)
+		FOR UPDATE`, payload.ReservationID).Scan(&status, &expiresAt, &createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	}
@@ -92,7 +111,7 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 	}
 
 	now := time.Now().UTC()
-	finalStatus, reason := paymentApprove, ""
+	finalStatus, reason := "confirmed", ""
 	if expiresAt == nil || !expiresAt.After(now) {
 		finalStatus, reason = "expired", "hold_expired"
 	} else if processor.paymentResult == paymentReject {
@@ -105,6 +124,10 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	if processor.metrics != nil {
+		processor.metrics.WorkerEventsProcessedTotal.WithLabelValues(event.Type, finalStatus).Inc()
+		processor.metrics.SagaLatencySeconds.WithLabelValues(finalStatus).Observe(time.Since(createdAt).Seconds())
+	}
 	if (finalStatus == "cancelled" || finalStatus == "expired") && processor.cache != nil {
 		_ = processor.cache.ClearSoldOut(ctx, payload.EventID)
 	}
@@ -112,7 +135,7 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 }
 
 func transitionReservation(ctx context.Context, tx pgx.Tx, payload HeldReservation, status, reason string) error {
-	if status == paymentApprove {
+	if status == "confirmed" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE events
 			SET held_quantity = held_quantity - $2,
@@ -170,6 +193,7 @@ type HeldReservation struct {
 	CustomerID    string    `json:"customer_id"`
 	Quantity      int       `json:"quantity"`
 	ExpiresAt     time.Time `json:"expires_at"`
+	CreatedAt     time.Time `json:"created_at,omitempty"`
 }
 
 // ParseHeldReservation validates a reservation.held.v1 event payload.

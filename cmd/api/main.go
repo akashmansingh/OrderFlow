@@ -15,6 +15,7 @@ import (
 	"github.com/theRiddler9/OrderFlow/internal/config"
 	"github.com/theRiddler9/OrderFlow/internal/database"
 	"github.com/theRiddler9/OrderFlow/internal/httpapi"
+	"github.com/theRiddler9/OrderFlow/internal/metrics"
 	"github.com/theRiddler9/OrderFlow/internal/reservation"
 )
 
@@ -52,7 +53,8 @@ func run(logger *slog.Logger) error {
 	}
 	defer databasePool.Close()
 
-	reservationService := reservation.NewService(databasePool, configuration.ReservationHold)
+	reservationService := reservation.NewService(databasePool, configuration.ReservationHold).
+		WithFeatureFlags(configuration.CacheEnabled, configuration.SoldOutFastPath)
 	authService := auth.NewService(auth.NewPostgresStore(databasePool), tokenManager)
 
 	var redisClient *cache.Client
@@ -67,6 +69,9 @@ func run(logger *slog.Logger) error {
 		}
 	}
 
+	metricsCollector := metrics.New(nil)
+	metricsCollector.RegisterPoolStats(databasePool, "api")
+
 	api := httpapi.NewServer(
 		databasePool,
 		reservationService,
@@ -75,7 +80,8 @@ func run(logger *slog.Logger) error {
 		configuration.RateLimitLoginPerMinute,
 		configuration.RateLimitReservationPerMinute,
 		logger,
-	)
+	).WithRateLimitEnabled(configuration.RateLimitEnabled).
+		WithMetrics(metricsCollector)
 	httpServer := &http.Server{
 		Addr:              configuration.HTTPAddress,
 		Handler:           api.Handler(),

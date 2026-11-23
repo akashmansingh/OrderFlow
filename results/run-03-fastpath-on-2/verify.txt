@@ -1,0 +1,18 @@
+﻿
+========================================================
+             DATABASE INVARIANT AUDIT REPORT            
+========================================================
+[PASS] available >= 0 (no oversell)
+       all events have non-negative available stock
+[PASS] available + reserved + confirmed == initial capacity
+       inventory is perfectly conserved across events and reservations
+[PASS] exactly one terminal state per reservation
+       every reservation has at most one terminal state transition
+[PASS] outbox fully drained
+       outbox table is fully drained (0 pending events)
+[PASS] inbox has no duplicate processed event IDs
+       processed_events has zero duplicates (idempotent inbox)
+--------------------------------------------------------
+RESULT: ALL 5 INVARIANTS PASSED (Zero anomalies, perfect conservation).
+========================================================
+
