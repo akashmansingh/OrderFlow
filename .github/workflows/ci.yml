@@ -52,9 +52,9 @@ jobs:
 
       - name: Validate Prometheus rules and config with promtool
         run: |
-          docker run --rm -v "${PWD}/deploy/prometheus:/etc/prometheus" prom/prometheus:v2.54.1 promtool check rules /etc/prometheus/recording_rules.yml /etc/prometheus/alerts.yml
-          docker run --rm -v "${PWD}/deploy/prometheus:/etc/prometheus" prom/prometheus:v2.54.1 promtool check config /etc/prometheus/prometheus.yml
-          docker run --rm -v "${PWD}/deploy/prometheus:/etc/prometheus" -w /etc/prometheus prom/prometheus:v2.54.1 promtool test rules test_alerts.yml
+          docker run --rm --entrypoint promtool -v "${PWD}/deploy/prometheus:/etc/prometheus" prom/prometheus:v2.54.1 check rules /etc/prometheus/recording_rules.yml /etc/prometheus/alerts.yml
+          docker run --rm --entrypoint promtool -v "${PWD}/deploy/prometheus:/etc/prometheus" prom/prometheus:v2.54.1 check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool -v "${PWD}/deploy/prometheus:/etc/prometheus" -w /etc/prometheus prom/prometheus:v2.54.1 test rules test_alerts.yml
 
       - name: Lint Grafana Dashboards JSON
         shell: bash
