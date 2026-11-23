@@ -88,3 +88,50 @@ func TestRateLimitMetricsIncrement(t *testing.T) {
 		t.Fatalf("expected orderflow_ratelimit_rejected_total in metrics output, got:\n%s", body)
 	}
 }
+
+func TestMetricsRoutePatternCardinality(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := metrics.New(reg)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	authService := newStubAuthenticator()
+	apiServer := httpapi.NewServer(nil, nil, authService, nil, 10, 10, logger).WithMetrics(m)
+	handler := apiServer.Handler()
+
+	rawUUID := "550e8400-e29b-41d4-a716-446655440000"
+
+	// 1. Matched route with param
+	req1 := httptest.NewRequest(http.MethodGet, "/v1/reservations/"+rawUUID, nil)
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+
+	// 2. Random 404 route
+	req2 := httptest.NewRequest(http.MethodGet, "/arbitrary/unknown/path/99999", nil)
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+
+	// Gather metrics from registry
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+
+	for _, mf := range mfs {
+		if mf.GetName() != "orderflow_http_requests_total" {
+			continue
+		}
+		for _, metric := range mf.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "path" {
+					val := label.GetValue()
+					if strings.Contains(val, rawUUID) {
+						t.Errorf("cardinality leak: metric contains raw UUID %q instead of route pattern", val)
+					}
+					if strings.Contains(val, "99999") {
+						t.Errorf("cardinality leak: 404 metric contains raw path %q instead of 'unmatched'", val)
+					}
+				}
+			}
+		}
+	}
+}

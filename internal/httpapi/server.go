@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -137,7 +138,11 @@ func (server *Server) instrument(next http.Handler) http.Handler {
 
 		pattern := request.Pattern
 		if pattern == "" {
-			pattern = request.URL.Path
+			pattern = "unmatched"
+		} else {
+			if parts := strings.SplitN(pattern, " ", 2); len(parts) == 2 {
+				pattern = parts[1]
+			}
 		}
 
 		server.metrics.HTTPRequestsTotal.WithLabelValues(request.Method, pattern, strconv.Itoa(rec.statusCode)).Inc()
