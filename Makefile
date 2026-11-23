@@ -1,4 +1,4 @@
-.PHONY: all test build seed verify
+.PHONY: all test build seed verify demo-traffic demo-failure
 
 all: test build
 
@@ -16,3 +16,9 @@ seed:
 
 verify:
 	go run ./cmd/verify
+
+demo-traffic:
+	bash scripts/demo_traffic.sh
+
+demo-failure:
+	bash scripts/demo_failure.sh

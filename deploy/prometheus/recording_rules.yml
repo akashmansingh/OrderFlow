@@ -1,0 +1,21 @@
+groups:
+  - name: orderflow_recording_rules
+    interval: 15s
+    rules:
+      - record: job:orderflow_http_duration_seconds:p50
+        expr: histogram_quantile(0.50, sum by (le, method, path) (rate(orderflow_http_request_duration_seconds_bucket[5m])))
+
+      - record: job:orderflow_http_duration_seconds:p95
+        expr: histogram_quantile(0.95, sum by (le, method, path) (rate(orderflow_http_request_duration_seconds_bucket[5m])))
+
+      - record: job:orderflow_http_duration_seconds:p99
+        expr: histogram_quantile(0.99, sum by (le, method, path) (rate(orderflow_http_request_duration_seconds_bucket[5m])))
+
+      - record: job:orderflow_http_requests:rate5m
+        expr: sum by (method, path, status) (rate(orderflow_http_requests_total[5m]))
+
+      - record: job:orderflow_http_errors:ratio5m
+        expr: sum(rate(orderflow_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(orderflow_http_requests_total[5m])), 1)
+
+      - record: job:orderflow_worker_saga_duration_seconds:p95
+        expr: histogram_quantile(0.95, sum by (le, outcome) (rate(orderflow_saga_duration_seconds_bucket[5m])))

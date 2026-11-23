@@ -20,6 +20,8 @@
 /data/
 /logs/
 *.log
+web/node_modules/
+web/dist/
 
 # Editor and OS files
 .vscode/

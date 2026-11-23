@@ -50,5 +50,19 @@ jobs:
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
 
+      - name: Validate Prometheus rules and config with promtool
+        run: |
+          docker run --rm --entrypoint promtool -v "${PWD}/deploy/prometheus:/etc/prometheus" prom/prometheus:v2.54.1 check rules /etc/prometheus/recording_rules.yml /etc/prometheus/alerts.yml
+          docker run --rm --entrypoint promtool -v "${PWD}/deploy/prometheus:/etc/prometheus" prom/prometheus:v2.54.1 check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool -v "${PWD}/deploy/prometheus:/etc/prometheus" -w /etc/prometheus prom/prometheus:v2.54.1 test rules test_alerts.yml
+
+      - name: Lint Grafana Dashboards JSON
+        shell: bash
+        run: |
+          for f in deploy/grafana/dashboards/*.json; do
+            echo "Checking $f..."
+            python3 -m json.tool "$f" > /dev/null
+          done
+
       - name: Build API container
         run: docker build --tag orderflow-api:ci .

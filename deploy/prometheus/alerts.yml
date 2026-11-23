@@ -1,0 +1,144 @@
+groups:
+  - name: orderflow_alerts
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target {{ $labels.job }} is down"
+          description: "Service instance {{ $labels.instance }} of job {{ $labels.job }} has been unreachable for more than 1 minute."
+          runbook_url: "docs/runbooks/target-down.md"
+
+      - alert: AbsentMetric
+        expr: absent(orderflow_http_requests_total) == 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Core metric orderflow_http_requests_total is absent"
+          description: "The HTTP request counter metric is missing from the Prometheus scrape target, indicating the service is failing to export metrics or crashed."
+          runbook_url: "docs/runbooks/metric-absent.md"
+
+      - alert: SLOAvailabilityBurnRatePage
+        expr: |
+          (
+            sum(rate(orderflow_http_requests_total{status=~"5.."}[1h]))
+            /
+            clamp_min(sum(rate(orderflow_http_requests_total[1h])), 1)
+          ) > (14.4 * 0.001)
+          and
+          (
+            sum(rate(orderflow_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(orderflow_http_requests_total[5m])), 1)
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High Availability Error Budget Burn Rate (1h window)"
+          description: "The 1-hour error budget burn rate is > 14.4x (2% budget consumed in 1 hour). Non-5xx availability is falling below 99.9% SLO."
+          runbook_url: "docs/runbooks/slo-availability-burn-rate.md"
+
+      - alert: SLOAvailabilityBurnRateTicket
+        expr: |
+          (
+            sum(rate(orderflow_http_requests_total{status=~"5.."}[6h]))
+            /
+            clamp_min(sum(rate(orderflow_http_requests_total[6h])), 1)
+          ) > (6 * 0.001)
+          and
+          (
+            sum(rate(orderflow_http_requests_total{status=~"5.."}[30m]))
+            /
+            clamp_min(sum(rate(orderflow_http_requests_total[30m])), 1)
+          ) > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated Availability Error Budget Burn Rate (6h window)"
+          description: "The 6-hour error budget burn rate is > 6x (5% budget consumed in 6 hours)."
+          runbook_url: "docs/runbooks/slo-availability-burn-rate.md"
+
+      - alert: SLOLatencyBurnRate
+        expr: histogram_quantile(0.99, sum by (le) (rate(orderflow_http_request_duration_seconds_bucket[5m]))) > 0.500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latency SLO Violation: p99 > 500ms"
+          description: "99th percentile HTTP request duration is {{ $value }}s, violating the 500ms latency SLO."
+          runbook_url: "docs/runbooks/slo-latency-burn-rate.md"
+
+      - alert: StuckSagas
+        expr: orderflow_outbox_oldest_row_age_seconds > 30
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sagas stuck in pending/outbox state"
+          description: "The oldest pending reservation outbox record has been waiting for {{ $value }}s (> 30s threshold)."
+          runbook_url: "docs/runbooks/stuck-sagas.md"
+
+      - alert: OutboxStagnation
+        expr: orderflow_outbox_backlog_records > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Transactional outbox backlog exceeding threshold"
+          description: "Transactional outbox backlog has {{ $value }} pending events (> 100 threshold)."
+          runbook_url: "docs/runbooks/outbox-stagnation.md"
+
+      - alert: ConsumerLagSpike
+        expr: sum by (topic) (orderflow_kafka_consumer_lag) > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer lag exceeding 50 records"
+          description: "Kafka consumer group lag on topic {{ $labels.topic }} is {{ $value }} records."
+          runbook_url: "docs/runbooks/consumer-lag-spike.md"
+
+      - alert: DeadLetterQueueActive
+        expr: sum(rate(orderflow_worker_dlq_events_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Unrecoverable poison events routing to Dead-Letter Queue"
+          description: "Events are failing terminal processing and being redirected to the DLQ."
+          runbook_url: "docs/runbooks/dead-letter-queue-active.md"
+
+      - alert: RedisFailOpenActive
+        expr: sum(rate(orderflow_redis_failopen_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis operations failing open to PostgreSQL"
+          description: "Redis operations are experiencing timeouts or connectivity failures and failing open."
+          runbook_url: "docs/runbooks/redis-fail-open-active.md"
+
+      - alert: PostgresConnectionsHigh
+        expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connections usage > 80%"
+          description: "Postgres connection pool saturation is currently at {{ $value | humanizePercentage }}."
+          runbook_url: "docs/runbooks/postgres-connections-high.md"
+
+      - alert: RedisMemoryHigh
+        expr: (redis_memory_max_bytes > 0) and (redis_memory_used_bytes / redis_memory_max_bytes > 0.85)
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory utilization > 85%"
+          description: "Redis memory utilization is at {{ $value | humanizePercentage }}."
+          runbook_url: "docs/runbooks/redis-memory-high.md"
