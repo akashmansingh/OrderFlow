@@ -18,8 +18,12 @@ import (
 	"github.com/theRiddler9/OrderFlow/internal/messaging"
 	"github.com/theRiddler9/OrderFlow/internal/metrics"
 	"github.com/theRiddler9/OrderFlow/internal/outbox"
+	"github.com/theRiddler9/OrderFlow/internal/tracing"
 	"github.com/theRiddler9/OrderFlow/internal/workflow"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type eventHandler interface {
@@ -70,6 +74,22 @@ func run(logger *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if configuration.TracingEnabled && configuration.OTLPEndpoint != "" {
+		shutdownTracer, err := tracing.Init(ctx, "orderflow-worker", configuration.OTLPEndpoint)
+		if err != nil {
+			logger.Warn("distributed tracing initialization failed, falling back to no-op", "error", err)
+		} else {
+			defer func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = shutdownTracer(shutdownCtx)
+			}()
+			logger.Info("distributed tracing initialized", "endpoint", configuration.OTLPEndpoint)
+		}
+	} else {
+		_, _ = tracing.Init(ctx, "orderflow-worker", "")
+	}
 
 	databasePool, err := database.Connect(ctx, configuration.DatabaseURL, configuration.DatabaseTimeout)
 	if err != nil {
@@ -155,6 +175,15 @@ func handleRecord(
 	logger *slog.Logger,
 	record *kgo.Record,
 ) error {
+	var traceParent, traceState string
+	for _, h := range record.Headers {
+		if h.Key == "traceparent" {
+			traceParent = string(h.Value)
+		} else if h.Key == "tracestate" {
+			traceState = string(h.Value)
+		}
+	}
+
 	event, err := events.ParseEnvelope(record.Value)
 	if err != nil {
 		if logger != nil {
@@ -169,6 +198,28 @@ func handleRecord(
 		return committer.CommitRecords(ctx, record)
 	}
 
+	if traceParent == "" {
+		traceParent = event.GetTraceParent()
+		traceState = event.GetTraceState()
+	}
+
+	ctx = tracing.ExtractTraceContext(ctx, traceParent, traceState)
+	tr := tracing.Tracer("orderflow.worker")
+	ctx, span := tr.Start(ctx, "workflow.ProcessReservationEvent",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination.name", record.Topic),
+			attribute.String("messaging.kafka.message.key", string(record.Key)),
+			attribute.Int("messaging.kafka.partition", int(record.Partition)),
+			attribute.Int64("messaging.kafka.offset", record.Offset),
+			attribute.String("event.id", event.ID),
+			attribute.String("event.type", event.Type),
+			attribute.String("reservation.id", event.AggregateID),
+		),
+	)
+	defer span.End()
+
 	const maxRetries = 3
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -178,6 +229,8 @@ func handleRecord(
 			}
 			select {
 			case <-ctx.Done():
+				span.RecordError(ctx.Err())
+				span.SetStatus(codes.Error, ctx.Err().Error())
 				return ctx.Err()
 			case <-time.After(time.Duration(attempt*10) * time.Millisecond):
 			}
@@ -185,6 +238,7 @@ func handleRecord(
 
 		err = handler.Handle(ctx, event)
 		if err == nil {
+			span.SetStatus(codes.Ok, "event processed successfully")
 			return committer.CommitRecords(ctx, record)
 		}
 
@@ -198,6 +252,9 @@ func handleRecord(
 	if workflow.IsPoisonError(lastErr) {
 		reason = "poison_payload"
 	}
+
+	span.RecordError(lastErr)
+	span.SetStatus(codes.Error, reason)
 
 	if logger != nil {
 		logger.Error("message handling failed, forwarding to DLQ", "event_id", event.ID, "reason", reason, "error", lastErr)
