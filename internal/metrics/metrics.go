@@ -23,9 +23,9 @@ type Metrics struct {
 	RedisFailOpenTotal    *prometheus.CounterVec
 
 	// Outbox & Broker metrics
-	OutboxBacklogRecords       prometheus.Gauge
-	OutboxOldestRowAgeSeconds  prometheus.Gauge
-	KafkaConsumerLag           *prometheus.GaugeVec
+	OutboxBacklogRecords      prometheus.Gauge
+	OutboxOldestRowAgeSeconds prometheus.Gauge
+	KafkaConsumerLag          *prometheus.GaugeVec
 
 	// Worker & Saga metrics
 	WorkerEventsProcessedTotal *prometheus.CounterVec

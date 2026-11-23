@@ -45,20 +45,20 @@ func TestMetricsRegistrationAndCollection(t *testing.T) {
 	}
 
 	expectedMetrics := map[string]bool{
-		"orderflow_http_requests_total":             false,
-		"orderflow_http_request_duration_seconds":   false,
-		"orderflow_ratelimit_rejected_total":        false,
-		"orderflow_redis_cache_hits_total":          false,
-		"orderflow_redis_cache_misses_total":        false,
-		"orderflow_redis_failopen_total":            false,
-		"orderflow_outbox_backlog_records":          false,
-		"orderflow_outbox_oldest_row_age_seconds":   false,
-		"orderflow_kafka_consumer_lag":              false,
-		"orderflow_worker_events_processed_total":   false,
-		"orderflow_worker_event_duration_seconds":   false,
-		"orderflow_worker_retries_total":            false,
-		"orderflow_worker_dlq_events_total":         false,
-		"orderflow_saga_duration_seconds":           false,
+		"orderflow_http_requests_total":           false,
+		"orderflow_http_request_duration_seconds": false,
+		"orderflow_ratelimit_rejected_total":      false,
+		"orderflow_redis_cache_hits_total":        false,
+		"orderflow_redis_cache_misses_total":      false,
+		"orderflow_redis_failopen_total":          false,
+		"orderflow_outbox_backlog_records":        false,
+		"orderflow_outbox_oldest_row_age_seconds": false,
+		"orderflow_kafka_consumer_lag":            false,
+		"orderflow_worker_events_processed_total": false,
+		"orderflow_worker_event_duration_seconds": false,
+		"orderflow_worker_retries_total":          false,
+		"orderflow_worker_dlq_events_total":       false,
+		"orderflow_saga_duration_seconds":         false,
 	}
 
 	for _, mf := range metricFamilies {
