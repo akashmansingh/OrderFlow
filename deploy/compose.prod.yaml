@@ -213,7 +213,7 @@ services:
       GF_SERVER_ROOT_URL: https://grafana.${DOMAIN:-orderflow.example.com}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     deploy:
       resources:

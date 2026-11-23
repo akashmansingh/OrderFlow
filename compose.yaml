@@ -225,7 +225,7 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./deploy/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+      - ./deploy/grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     deploy:
       resources:
