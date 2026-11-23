@@ -11,7 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/theRiddler9/OrderFlow/internal/tracing"
 )
 
 var (
@@ -146,14 +151,31 @@ func (service *Service) GetEvent(ctx context.Context, eventID string) (Event, er
 }
 
 func (service *Service) CreateReservation(ctx context.Context, input CreateReservationInput) (Reservation, error) {
+	tr := tracing.Tracer("reservation.service")
+	ctx, span := tr.Start(ctx, "reservation.CreateReservation",
+		trace.WithAttributes(
+			attribute.String("reservation.event_id", input.EventID),
+			attribute.Int("reservation.quantity", input.Quantity),
+			attribute.String("reservation.customer_id", input.CustomerID),
+		),
+	)
+	defer span.End()
+
 	if _, err := uuid.Parse(input.EventID); err != nil {
+		span.RecordError(ErrEventNotFound)
+		span.SetStatus(codes.Error, ErrEventNotFound.Error())
 		return Reservation{}, ErrEventNotFound
 	}
 	if _, err := uuid.Parse(input.CustomerID); err != nil || input.Quantity <= 0 || input.IdempotencyKey == "" || len(input.RequestHash) == 0 {
-		return Reservation{}, fmt.Errorf("customer_id, positive quantity, idempotency key, and request hash are required")
+		err := fmt.Errorf("customer_id, positive quantity, idempotency key, and request hash are required")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return Reservation{}, err
 	}
 
 	if service.isSoldOut(ctx, input.EventID) {
+		span.RecordError(ErrInsufficientInventory)
+		span.SetStatus(codes.Error, ErrInsufficientInventory.Error())
 		return Reservation{}, ErrInsufficientInventory
 	}
 
@@ -203,14 +225,24 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 		return Reservation{}, fmt.Errorf("save idempotency key: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]any{
+	payloadMap := map[string]any{
 		"reservation_id": reservation.ID,
 		"event_id":       reservation.EventID,
 		"customer_id":    reservation.CustomerID,
 		"quantity":       reservation.Quantity,
 		"expires_at":     reservation.ExpiresAt,
-	})
+	}
+	if tp, ts := tracing.InjectTraceParent(ctx); tp != "" {
+		payloadMap["traceparent"] = tp
+		if ts != "" {
+			payloadMap["tracestate"] = ts
+		}
+	}
+
+	payload, err := json.Marshal(payloadMap)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return Reservation{}, fmt.Errorf("encode reservation event: %w", err)
 	}
 
@@ -221,13 +253,19 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 		"reservation.held.v1",
 		payload,
 	); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return Reservation{}, fmt.Errorf("write reservation outbox event: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return Reservation{}, fmt.Errorf("commit reservation transaction: %w", err)
 	}
 
+	span.SetAttributes(attribute.String("reservation.id", reservation.ID))
+	span.SetStatus(codes.Ok, "reservation held")
 	return reservation, nil
 }
 
