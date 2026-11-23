@@ -1,39 +1,137 @@
-# CI/CD and Deployment
+# OrderFlow Production Deployment Guide
 
-## CI
+## Architecture & Hosting Specifications
 
-GitHub Actions runs `.github/workflows/ci.yml` for pull requests to `main`, pushes to `main`, and manual dispatches. It checks Go formatting, vet, unit tests, API compilation, Compose configuration, and the API container build.
+OrderFlow is designed for zero-downtime, reproducible deployment on a single cloud VM (e.g., Hetzner CPX21, AWS EC2 t4g.medium, or Oracle Cloud Always Free 4-core Ampere):
+- **CPU:** Minimum 2 vCPU
+- **RAM:** Minimum 4 GB RAM
+- **Storage:** 40 GB NVMe / SSD
+- **Operating System:** Ubuntu 22.04 LTS or 24.04 LTS
 
-The workflow intentionally does not start the local E2E suite. E2E tests require an explicitly provisioned stack and are run only when their opt-in environment variable is supplied.
+```text
+Internet
+   │ (HTTPS: 443 / HTTP: 80)
+   ▼
+[ Caddy Reverse Proxy (Automatic TLS) ]
+   ├── api.orderflow.example     ──► [ orderflow-api :8080 ] (Blocks /metrics)
+   └── grafana.orderflow.example ──► [ grafana :3000 ] (Anonymous Viewer / Admin auth)
+                                              │
+Internal Docker Bridge Network                │ (PromQL)
+─────────────────────────────────────────────┼────────────────────────────
+                                             ▼
+                                     [ prometheus :9090 ] (15d retention)
+                                             │
+                       ┌─────────────────────┴─────────────────────┐
+                       ▼                                           ▼
+             [ alertmanager :9093 ]                       [ Infrastructure ]
+                       │                                   ├── postgres (5432)
+                       ▼                                   ├── redis (6379)
+             [ Webhook / Discord / Slack ]                 ├── redpanda (9092)
+                                                           └── exporters (node, cadvisor)
+```
 
-## Manual deployment
+---
 
-`.github/workflows/deploy.yml` deploys only when manually started from `main`. GitHub's `production` environment serializes deployments, and the workflow checks out the exact triggering commit on the VM before rebuilding the Compose stack and checking `/healthz`.
+## 1. DNS Configuration
 
-Configure these GitHub Actions secrets before triggering the workflow:
+Create two DNS `A` records pointing to your cloud VM public IPv4 address:
+- `api.<your-domain>.com` $\rightarrow$ `<VM_PUBLIC_IP>`
+- `grafana.<your-domain>.com` $\rightarrow$ `<VM_PUBLIC_IP>`
 
-| Secret | Value |
-| --- | --- |
-| `DEPLOY_HOST` | VM DNS name or IP address |
-| `DEPLOY_USER` | Least-privileged Linux account that can run Docker Compose |
-| `DEPLOY_PATH` | Absolute path of the cloned OrderFlow repository on the VM |
-| `DEPLOY_SSH_KEY` | Private SSH key for `DEPLOY_USER` |
-| `DEPLOY_KNOWN_HOSTS` | Pinned SSH host-key entry from `ssh-keyscan` reviewed out of band |
+*(Optional: Use free wildcard DNS services such as DuckDNS or nip.io for staging).*
 
-Do not commit any of these values or place them in `.env.example`.
+---
 
-## VM preparation
+## 2. Firewall Configuration (UFW)
 
-Before the first deploy, install Docker Engine with Compose support, create the deployment account, clone the repository into `DEPLOY_PATH`, and give that account Docker access. Create production-only environment values on the VM in a local `.env` file. Set `JWT_SECRET` there to a VM-local random secret of at least 32 bytes and rotate it only with an accepted user logout period; the 15-minute access tokens remain valid until they expire. The workflow never transfers secrets from the repository.
+Restrict incoming traffic so that **only** SSH (22), HTTP (80), and HTTPS (443) are publicly reachable. All backend services (PostgreSQL, Redpanda, Redis, Prometheus, Alertmanager) bind exclusively to the internal Docker network.
 
-The current Compose file binds API, PostgreSQL, Redis, Redpanda, and pgAdmin ports to `127.0.0.1`. This is correct for local development and VM-internal health checks. A future public deployment needs a separately configured HTTPS reverse proxy that exposes only the API; PostgreSQL, Redis, Redpanda, and pgAdmin must remain private.
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp    # SSH
+sudo ufw allow 80/tcp    # HTTP (Let's Encrypt ACME challenge)
+sudo ufw allow 443/tcp   # HTTPS (TLS traffic)
+sudo ufw enable
+```
 
-## Docker connection map
+---
 
-| Client | PostgreSQL host | Port | Reason |
-| --- | --- | --- | --- |
-| OrderFlow API / pgAdmin Compose container | `postgres` | `5432` | Docker Compose service network |
-| Windows host tools or desktop pgAdmin | `localhost` | `5433` | Host mapping avoids the existing local PostgreSQL on `5432` |
-| Deployment VM host | `localhost` | `5433` | Same Compose host mapping; not publicly exposed |
+## 3. First-Time Production Deployment
 
-Changing the Windows/VM host port does not require a change to `DATABASE_URL`: containers continue to connect through `postgres:5432`.
+1. **Clone repository on the VM:**
+   ```bash
+   git clone https://github.com/theRiddler9/OrderFlow.git /opt/orderflow
+   cd /opt/orderflow
+   ```
+
+2. **Configure production environment:**
+   Create `.env` inside `/opt/orderflow` (never committed to git):
+   ```ini
+   DOMAIN=yourdomain.com
+   ACME_EMAIL=admin@yourdomain.com
+   POSTGRES_USER=orderflow
+   POSTGRES_PASSWORD=generate-a-strong-random-password-here
+   POSTGRES_DB=orderflow
+   JWT_SECRET=generate-a-cryptographically-secure-32-byte-secret
+   GRAFANA_ADMIN_USER=admin
+   GRAFANA_ADMIN_PASSWORD=generate-a-strong-grafana-password
+   GRAFANA_ANONYMOUS_VIEWER=true
+   ALERTMANAGER_WEBHOOK_URL=https://discord.com/api/webhooks/...
+   TAG=latest
+   ```
+
+3. **Deploy production compose stack:**
+   ```bash
+   docker compose -f deploy/compose.prod.yaml pull
+   docker compose -f deploy/compose.prod.yaml up -d
+   ```
+
+4. **Verify deployment health:**
+   ```bash
+   curl -I https://api.yourdomain.com/healthz
+   # Expected: HTTP/2 200 OK
+   
+   curl -I https://api.yourdomain.com/metrics
+   # Expected: HTTP/2 403 Forbidden (Blocked by Caddy)
+   ```
+
+---
+
+## 4. Operator SSH Tunnels for Internal Observability
+
+Prometheus (`:9090`) and Alertmanager (`:9093`) are not exposed publicly. Operators access them securely via an encrypted SSH tunnel:
+
+```bash
+ssh -L 9090:localhost:9090 -L 9093:localhost:9093 user@<VM_PUBLIC_IP>
+```
+Now browse to:
+- Prometheus UI: `http://localhost:9090`
+- Alertmanager UI: `http://localhost:9093`
+
+---
+
+## 5. Automated Rollback & CI/CD
+
+Deployments are automated via `.github/workflows/deploy.yml`:
+1. On merge to `main`, GitHub Actions runs the full test suite, builds Docker images, and tags them with the Git commit SHA.
+2. Pushes images to GitHub Container Registry (GHCR).
+3. Connects via SSH to the VM and issues `docker compose -f deploy/compose.prod.yaml up -d`.
+4. Executes an automated smoke test against `https://api.<domain>/healthz`.
+5. **Rollback Trigger:** If the smoke test fails, the workflow immediately executes automated rollback to restore the previous container image tag.
+
+---
+
+## 6. Disaster Recovery & Backups
+
+### Automated Logical Backup:
+```bash
+./scripts/backup.sh
+# Creates gzip compressed backup in backups/orderflow_YYYYMMDD_HHMMSS.sql.gz
+```
+
+### Verified Restore Procedure:
+```bash
+./scripts/restore.sh backups/orderflow_20261123_120000.sql.gz
+# Streams database restore and immediately executes invariant validation audit (cmd/verify)
+```

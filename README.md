@@ -10,6 +10,33 @@ Client -> Reservation API -> PostgreSQL transaction + outbox -> Redpanda -> Work
 
 PostgreSQL is the source of truth. The API creates `held` reservations atomically with an outbox record; the worker relays that record to Redpanda and then confirms, cancels, or expires the reservation. Delivery is at least once, so processed-event records and conditional state transitions make duplicate messages safe.
 
+## Live demo & observability
+
+OrderFlow features production-grade observability with Dashboards-as-Code and Prometheus alerting:
+- **Public Grafana Monitoring Portal:** [https://grafana.orderflow.example.com](https://grafana.orderflow.example.com) *(Anonymous Viewer enabled)*
+- **Public API Endpoint:** [https://api.orderflow.example.com](https://api.orderflow.example.com) *(Protected via Caddy with `/metrics` blocked)*
+
+### Operational Dashboards:
+
+1. **Executive & API Overview:**
+   ![Executive Overview](docs/images/grafana-overview.png)
+   *Tracks real-time RPS by status, 5xx error ratios, recording rule latency quantiles (p50, p95, p99), saga completion throughput, and multi-window SLO error budget burn rates.*
+
+2. **Asynchronous Pipeline & Sagas:**
+   ![Asynchronous Pipeline](docs/images/grafana-pipeline.png)
+   *Visualizes transactional outbox backlog count, oldest unpublished row age, Kafka consumer lag per partition, worker retries, and dead-letter queue (DLQ) poison event routing.*
+
+3. **Infrastructure & Resources:**
+   ![Infrastructure & Resources](docs/images/grafana-infra.png)
+   *Monitors PostgreSQL active connections & transaction commit/rollback rates, Redis ops/sec & sold-out cache hit/miss ratio, Redpanda broker latency, and cAdvisor container CPU/memory.*
+
+### Failure Injection & Self-Healing Demo:
+
+![Worker Failure & Self-Healing](docs/images/failure-demo.gif)
+*Simulating saga worker crash under load (`make demo-failure`): outbox backlog accumulates, `StuckSagas` / `OutboxStagnation` alerts fire in Alertmanager, the worker recovers automatically, and PostgreSQL invariants prove 0 inventory oversells.*
+
+---
+
 ## Quick start
 
 ```powershell
