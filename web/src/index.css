@@ -376,6 +376,27 @@ a {
   dialog.modal-drawer[open] {
     animation: drawer-in 0.3s cubic-bezier(0.2, 0.9, 0.25, 1) both;
   }
+  /* Success banner: drops in, then a single green flash to catch the eye. */
+  .banner-success {
+    animation:
+      banner-in 0.4s cubic-bezier(0.2, 0.9, 0.25, 1.15) both,
+      banner-flash 1.1s ease-out 0.15s both;
+  }
+  @keyframes banner-in {
+    from {
+      transform: translateY(-10px) scale(0.97);
+      opacity: 0;
+    }
+  }
+  @keyframes banner-flash {
+    from {
+      box-shadow: 0 0 0 0 rgb(23 178 106 / 0.7);
+    }
+    to {
+      box-shadow: 0 0 0 12px rgb(23 178 106 / 0);
+    }
+  }
+
   @keyframes modal-in {
     from {
       transform: translateY(14px) scale(0.98);
