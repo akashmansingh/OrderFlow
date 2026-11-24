@@ -30,10 +30,12 @@ type inventoryCache interface {
 
 // Processor applies held reservation events to authoritative PostgreSQL state.
 type Processor struct {
-	database      *pgxpool.Pool
-	paymentResult string
-	cache         inventoryCache
-	metrics       *metrics.Metrics
+	database         *pgxpool.Pool
+	paymentResult    string
+	cache            inventoryCache
+	metrics          *metrics.Metrics
+	autoConfirmHolds bool
+	paymentDelay     time.Duration
 }
 
 func NewProcessor(database *pgxpool.Pool, paymentResult string) *Processor {
@@ -48,6 +50,18 @@ func (processor *Processor) WithCache(cache inventoryCache) *Processor {
 // WithMetrics attaches a Prometheus metrics collector to the processor.
 func (processor *Processor) WithMetrics(m *metrics.Metrics) *Processor {
 	processor.metrics = m
+	return processor
+}
+
+// WithAutoConfirmHolds configures whether held reservations are auto-confirmed upon hold event.
+func (processor *Processor) WithAutoConfirmHolds(autoConfirm bool) *Processor {
+	processor.autoConfirmHolds = autoConfirm
+	return processor
+}
+
+// WithPaymentDelay injects a simulated payment processing delay to reflect realistic network latency.
+func (processor *Processor) WithPaymentDelay(delay time.Duration) *Processor {
+	processor.paymentDelay = delay
 	return processor
 }
 
@@ -76,7 +90,7 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 		}
 		return nil
 	}
-	if event.Type != "reservation.held.v1" {
+	if event.Type != "reservation.held.v1" && event.Type != "reservation.payment_requested.v1" {
 		return fmt.Errorf("unsupported event type %q", event.Type)
 	}
 	if processor.database == nil {
@@ -105,6 +119,32 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 	}
 	if err != nil {
 		return fmt.Errorf("record processed event: %w", err)
+	}
+
+	// If this is a reservation.held.v1 and auto-confirm is not enabled,
+	// record the event as processed and keep the reservation held for the user to pay.
+	if event.Type == "reservation.held.v1" && !processor.autoConfirmHolds {
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		if processor.metrics != nil {
+			processor.metrics.WorkerEventsProcessedTotal.WithLabelValues(event.Type, "held").Inc()
+		}
+		span.SetStatus(codes.Ok, "reservation held awaiting payment")
+		return nil
+	}
+
+	if processor.paymentDelay > 0 {
+		_, simSpan := tr.Start(ctx, "payment.Simulate",
+			trace.WithAttributes(attribute.String("payment.simulation", processor.paymentResult)),
+		)
+		select {
+		case <-time.After(processor.paymentDelay):
+		case <-ctx.Done():
+			simSpan.End()
+			return ctx.Err()
+		}
+		simSpan.End()
 	}
 
 	var status string
@@ -224,10 +264,10 @@ type HeldReservation struct {
 	CreatedAt     time.Time `json:"created_at,omitempty"`
 }
 
-// ParseHeldReservation validates a reservation.held.v1 event payload.
+// ParseHeldReservation validates a reservation.held.v1 or reservation.payment_requested.v1 event payload.
 func ParseHeldReservation(event events.Envelope) (HeldReservation, error) {
-	if event.Type != "reservation.held.v1" {
-		return HeldReservation{}, fmt.Errorf("event type %q is not reservation.held.v1", event.Type)
+	if event.Type != "reservation.held.v1" && event.Type != "reservation.payment_requested.v1" {
+		return HeldReservation{}, fmt.Errorf("event type %q is not reservation.held.v1 or reservation.payment_requested.v1", event.Type)
 	}
 
 	var payload HeldReservation

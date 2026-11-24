@@ -116,7 +116,7 @@ function MinuteCells({ secondsLeft }: { secondsLeft: number }) {
 }
 
 const MESSAGES: Record<string, string> = {
-  held: 'Tickets held. Processing payment asynchronously…',
+  held: 'Tickets reserved! Click Pay Now below to complete payment.',
   confirmed: 'Payment approved. Reservation secured.',
   cancelled: 'Payment declined. Your tickets are back on sale.',
   expired: 'Hold expired. Your tickets are back on sale.',
@@ -126,6 +126,8 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
   const terminal = isTerminal(hold.status)
   const secondsLeft = useCountdown(hold.expiresAt, !terminal)
   const [linkIssue, setLinkIssue] = useState<string | null>(null)
+  const [paying, setPaying] = useState(false)
+  const [payError, setPayError] = useState<string | null>(null)
 
   // Only slam the stamp if the status settles while we're watching.
   const watchedLive = useRef(!terminal)
@@ -171,9 +173,20 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
   }, [hold.id, token, terminal])
 
   const confirmed = hold.status === 'confirmed'
-  const message = MESSAGES[hold.status] ?? MESSAGES.held
+  const message = paying ? 'Processing payment asynchronously…' : (MESSAGES[hold.status] ?? MESSAGES.held)
   const date = formatEventDate(hold.eventStartsAt)
   const windowOver = !terminal && secondsLeft === 0
+
+  const handlePay = async () => {
+    setPaying(true)
+    setPayError(null)
+    try {
+      await api.payReservation(token, hold.id)
+    } catch (err) {
+      setPayError(err instanceof Error ? err.message : 'Payment failed to initiate')
+      setPaying(false)
+    }
+  }
 
   return (
     <li className={`ticket-wrap list-none ${isNew ? 'hold-new rounded-lg' : ''}`}>
@@ -225,11 +238,29 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
         </p>
         {linkIssue && <p className="mb-0 mt-1 text-sm text-ink/60">{linkIssue}</p>}
 
-        <div className="mt-4 flex items-center justify-end gap-3 border-t-2 border-dashed border-ink/25 pt-3">
-          <button type="button" className="btn btn-outline-ink btn-sm" onClick={() => onInspect(hold.id)}>
+        <div className="mt-4 flex items-center justify-between gap-3 border-t-2 border-dashed border-ink/25 pt-3">
+          {!terminal && (
+            <button
+              type="button"
+              className="btn btn-signal btn-sm flex items-center gap-1.5 font-bold shadow-sm hover:brightness-105 active:scale-[0.98] transition-all"
+              disabled={paying || windowOver}
+              onClick={handlePay}
+            >
+              {paying ? (
+                <>
+                  <span className="inline-block size-3 animate-spin rounded-full border-2 border-paper border-t-transparent" />
+                  Processing…
+                </>
+              ) : (
+                '💳 Pay Now'
+              )}
+            </button>
+          )}
+          <button type="button" className="btn btn-outline-ink btn-sm ml-auto" onClick={() => onInspect(hold.id)}>
             Inspect trace
           </button>
         </div>
+        {payError && <p className="mb-0 mt-2 text-xs font-semibold text-vermilion">{payError}</p>}
       </article>
     </li>
   )

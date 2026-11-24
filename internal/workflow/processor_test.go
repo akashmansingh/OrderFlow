@@ -68,9 +68,33 @@ func (s *stubWorkflowCache) ClearSoldOut(ctx context.Context, eventID string) er
 	return nil
 }
 
+func TestParseHeldReservationAcceptsPaymentRequested(t *testing.T) {
+	event := events.Envelope{
+		Type: "reservation.payment_requested.v1",
+		Payload: []byte(`{
+			"reservation_id":"61c26b50-c02a-4a86-a46d-1f2ea1078b9f",
+			"event_id":"96e74b3e-01aa-469e-802d-f04e1dcfbdff",
+			"customer_id":"8a9db6db-01eb-4fd3-aeba-dd1255a4f970",
+			"quantity":3,
+			"expires_at":"2026-11-17T12:10:00Z"
+		}`),
+	}
+
+	payload, err := workflow.ParseHeldReservation(event)
+	if err != nil {
+		t.Fatalf("ParseHeldReservation() error = %v", err)
+	}
+	if payload.Quantity != 3 {
+		t.Fatalf("Quantity = %d, want 3", payload.Quantity)
+	}
+}
+
 func TestProcessorWithCache(t *testing.T) {
 	cache := &stubWorkflowCache{}
-	processor := workflow.NewProcessor(nil, "approve").WithCache(cache)
+	processor := workflow.NewProcessor(nil, "approve").
+		WithCache(cache).
+		WithAutoConfirmHolds(false).
+		WithPaymentDelay(10 * time.Millisecond)
 	if processor == nil {
 		t.Fatal("expected non-nil processor")
 	}

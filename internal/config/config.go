@@ -37,6 +37,8 @@ type Config struct {
 	LoadTestMode                  bool
 	OTLPEndpoint                  string
 	TracingEnabled                bool
+	AutoConfirmHolds              bool
+	SimulatedPaymentDelay         time.Duration
 }
 
 // Load reads configuration shared by the API and worker.
@@ -101,6 +103,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	autoConfirmHolds, err := boolFromEnv("AUTO_CONFIRM_HOLDS", false)
+	if err != nil {
+		return Config{}, err
+	}
+	simulatedPaymentDelay, err := durationFromEnv("SIMULATED_PAYMENT_DELAY", 0)
+	if err != nil {
+		return Config{}, err
+	}
 
 	config := Config{
 		Environment:                   valueOrDefault("APP_ENV", "development"),
@@ -129,6 +139,8 @@ func Load() (Config, error) {
 		LoadTestMode:                  loadTestMode,
 		OTLPEndpoint:                  strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
 		TracingEnabled:                tracingEnabled,
+		AutoConfirmHolds:              autoConfirmHolds,
+		SimulatedPaymentDelay:         simulatedPaymentDelay,
 	}
 
 	if config.Environment == "production" && config.LoadTestMode {

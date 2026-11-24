@@ -118,14 +118,33 @@ func (server *Server) getReservation(response http.ResponseWriter, request *http
 	writeJSON(response, http.StatusOK, reservationRecord)
 }
 
+func (server *Server) payReservation(response http.ResponseWriter, request *http.Request) {
+	customerID, ok := subjectFromContext(request.Context())
+	if !ok {
+		server.writeUnauthorized(response)
+		return
+	}
+
+	reservationID := request.PathValue("reservationID")
+	reservationRecord, err := server.service.PayReservation(request.Context(), reservationID, customerID)
+	if err != nil {
+		server.writeServiceError(response, err)
+		return
+	}
+
+	writeJSON(response, http.StatusOK, reservationRecord)
+}
+
 func (server *Server) writeServiceError(response http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, reservation.ErrEventNotFound), errors.Is(err, reservation.ErrReservationNotFound):
 		writeJSON(response, http.StatusNotFound, map[string]string{"error": err.Error()})
 	case errors.Is(err, reservation.ErrInsufficientInventory):
 		writeJSON(response, http.StatusConflict, map[string]string{"error": err.Error()})
-	case errors.Is(err, reservation.ErrIdempotencyConflict):
+	case errors.Is(err, reservation.ErrIdempotencyConflict), errors.Is(err, reservation.ErrReservationNotHeld):
 		writeJSON(response, http.StatusConflict, map[string]string{"error": err.Error()})
+	case errors.Is(err, reservation.ErrHoldExpired):
+		writeJSON(response, http.StatusGone, map[string]string{"error": err.Error()})
 	default:
 		server.logger.Error("request failed", "error", err)
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})

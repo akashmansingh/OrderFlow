@@ -315,4 +315,9 @@ export const api = {
     const { data } = await request('GET', `/v1/reservations/${id}`, { token, signal, quiet: true })
     return toReservation(data)
   },
+
+  async payReservation(token: string, id: string): Promise<Reservation> {
+    const { data, traceparent } = await request('POST', `/v1/reservations/${id}/pay`, { token })
+    return toReservation(data, traceparent)
+  },
 }

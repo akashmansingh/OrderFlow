@@ -11,6 +11,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 
 const PORT = Number(process.env.MOCK_PORT ?? 8787)
 const PAYMENT = process.env.MOCK_PAYMENT ?? 'approve'
+const AUTO_SETTLE = process.env.AUTO_SETTLE === 'true'
 const HOLD_MS = Number(process.env.MOCK_HOLD_SECONDS ?? 600) * 1000
 const SETTLE_MS = Number(process.env.MOCK_SETTLE_MS ?? 3500)
 
@@ -182,10 +183,27 @@ const server = createServer(async (req, res) => {
       owner: user,
     }
     reservations.set(r.id, r)
-    settle(r)
+    if (AUTO_SETTLE) settle(r)
+    setTimeout(() => {
+      if (r.status === 'held') {
+        r.status = 'expired'
+        events.get(r.event_id).available += r.quantity
+        console.log(`[saga] ${r.id.slice(0, 8)} -> expired`)
+      }
+    }, HOLD_MS)
     const body = publicReservation(r)
     idempotent.set(`${user}:${key}`, { status: 201, body, traceparent: r.traceparent })
     return send(res, 201, body, { traceparent: r.traceparent })
+  }
+
+  m = /^\/v1\/reservations\/([^/]+)\/pay$/.exec(path)
+  if (m && method === 'POST') {
+    const r = reservations.get(m[1])
+    if (!r || r.owner !== user) return send(res, 404, { error: 'reservation not found' })
+    if (r.status === 'confirmed') return send(res, 200, publicReservation(r))
+    if (r.status !== 'held') return send(res, 409, { error: 'reservation is not held' })
+    settle(r)
+    return send(res, 200, publicReservation(r))
   }
 
   m = /^\/v1\/reservations\/([^/]+)$/.exec(path)

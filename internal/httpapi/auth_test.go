@@ -86,6 +86,15 @@ func (service *fakeReservationService) GetReservationForCustomer(_ context.Conte
 	return service.createdReservation, nil
 }
 
+func (service *fakeReservationService) PayReservation(_ context.Context, reservationID, customerID string) (reservation.Reservation, error) {
+	service.checkedCustomers = append(service.checkedCustomers, customerID)
+	return reservation.Reservation{
+		ID:         reservationID,
+		CustomerID: customerID,
+		Status:     "held",
+	}, nil
+}
+
 func newTestServer(reservations *fakeReservationService, authenticator *fakeAuthenticator) *httpapi.Server {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return httpapi.NewServer(nil, reservations, authenticator, nil, 0, 0, logger)
@@ -287,4 +296,27 @@ func TestAuthErrorResponses(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPayReservationRoute(t *testing.T) {
+	customerID := uuid.NewString()
+	reservationID := uuid.NewString()
+	authenticator := &fakeAuthenticator{subject: customerID}
+	reservations := &fakeReservationService{}
+	handler := newTestServer(reservations, authenticator).Handler()
+
+	t.Run("requires authentication", func(t *testing.T) {
+		response := performRequest(t, handler, http.MethodPost, "/v1/reservations/"+reservationID+"/pay", nil, nil)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("authorized pay succeeds", func(t *testing.T) {
+		headers := map[string]string{"Authorization": "Bearer token"}
+		response := performRequest(t, handler, http.MethodPost, "/v1/reservations/"+reservationID+"/pay", nil, headers)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+		}
+	})
 }

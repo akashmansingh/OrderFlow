@@ -24,6 +24,8 @@ var (
 	ErrReservationNotFound   = errors.New("reservation not found")
 	ErrInsufficientInventory = errors.New("insufficient inventory")
 	ErrIdempotencyConflict   = errors.New("idempotency key was used with a different request")
+	ErrReservationNotHeld    = errors.New("reservation is not held")
+	ErrHoldExpired           = errors.New("reservation hold has expired")
 )
 
 type Event struct {
@@ -327,6 +329,99 @@ func (service *Service) GetReservationForCustomer(ctx context.Context, reservati
 	if reservation.CustomerID != customerID {
 		return Reservation{}, ErrReservationNotFound
 	}
+	return reservation, nil
+}
+
+// PayReservation initiates payment for a held reservation by writing a payment_requested outbox event.
+func (service *Service) PayReservation(ctx context.Context, reservationID, customerID string) (Reservation, error) {
+	tr := tracing.Tracer("orderflow.reservation")
+	ctx, span := tr.Start(ctx, "reservation.PayReservation",
+		trace.WithAttributes(
+			attribute.String("reservation.id", reservationID),
+			attribute.String("customer.id", customerID),
+		),
+	)
+	defer span.End()
+
+	if _, err := uuid.Parse(reservationID); err != nil {
+		return Reservation{}, ErrReservationNotFound
+	}
+	if _, err := uuid.Parse(customerID); err != nil {
+		return Reservation{}, ErrReservationNotFound
+	}
+
+	tx, err := service.database.Begin(ctx)
+	if err != nil {
+		return Reservation{}, fmt.Errorf("begin pay transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	const query = `
+		SELECT id, event_id, customer_id, quantity, status, expires_at, created_at
+		FROM reservations
+		WHERE id = $1 AND customer_id = $2
+		FOR UPDATE`
+
+	reservation, err := scanReservation(tx.QueryRow(ctx, query, reservationID, customerID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Reservation{}, ErrReservationNotFound
+	}
+	if err != nil {
+		return Reservation{}, fmt.Errorf("read reservation for pay: %w", err)
+	}
+
+	if reservation.Status == "confirmed" {
+		return reservation, nil
+	}
+	if reservation.Status != "held" {
+		return Reservation{}, ErrReservationNotHeld
+	}
+
+	now := time.Now().UTC()
+	if reservation.ExpiresAt != nil && !reservation.ExpiresAt.After(now) {
+		return Reservation{}, ErrHoldExpired
+	}
+
+	payloadMap := map[string]any{
+		"reservation_id": reservation.ID,
+		"event_id":       reservation.EventID,
+		"customer_id":    reservation.CustomerID,
+		"quantity":       reservation.Quantity,
+		"expires_at":     reservation.ExpiresAt,
+	}
+	if tp, ts := tracing.InjectTraceParent(ctx); tp != "" {
+		payloadMap["traceparent"] = tp
+		if ts != "" {
+			payloadMap["tracestate"] = ts
+		}
+	}
+
+	payload, err := json.Marshal(payloadMap)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return Reservation{}, fmt.Errorf("encode pay event: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO outbox_events (id, aggregate_id, event_type, payload) VALUES ($1, $2, $3, $4)`,
+		uuid.New(),
+		reservation.ID,
+		"reservation.payment_requested.v1",
+		payload,
+	); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return Reservation{}, fmt.Errorf("write pay outbox event: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return Reservation{}, fmt.Errorf("commit pay transaction: %w", err)
+	}
+
+	span.SetStatus(codes.Ok, "payment requested")
 	return reservation, nil
 }
 
