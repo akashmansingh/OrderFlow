@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from 'react'
+import { useId, useRef, useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { ApiError, errorMessage } from '../lib/api'
 import { Modal } from './Modal'
@@ -29,6 +29,7 @@ function AuthForm({ initialTab, onDone, onCancel }: { initialTab: AuthTab; onDon
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const uid = useId()
+  const emailRef = useRef<HTMLInputElement>(null)
 
   const isLogin = tab === 'login'
 
@@ -36,8 +37,6 @@ function AuthForm({ initialTab, onDone, onCancel }: { initialTab: AuthTab; onDon
     setTab(next)
     setError(null)
     setSuccess(null)
-    setEmail('')
-    setPassword('')
   }
 
   async function submit(e: FormEvent) {
@@ -51,10 +50,13 @@ function AuthForm({ initialTab, onDone, onCancel }: { initialTab: AuthTab; onDon
         onDone()
       } else {
         await register(email.trim(), password)
-        setSuccess('Account created successfully! Please enter your details to sign in.')
+        // No auto sign-in: switch to the Sign in tab with empty fields, animated banner, and focus email.
         setTab('login')
         setEmail('')
         setPassword('')
+        setShowPassword(false)
+        setSuccess('Account created successfully! Please enter your details to sign in.')
+        emailRef.current?.focus()
       }
     } catch (err) {
       if (err instanceof ApiError) {
@@ -113,6 +115,7 @@ function AuthForm({ initialTab, onDone, onCancel }: { initialTab: AuthTab; onDon
           Email
           <input
             id={`${uid}-email`}
+            ref={emailRef}
             type="email"
             required
             autoFocus
@@ -150,7 +153,7 @@ function AuthForm({ initialTab, onDone, onCancel }: { initialTab: AuthTab; onDon
         </div>
 
         {success && (
-          <p role="status" className="m-0 rounded-[5px] bg-signal px-3.5 py-2.5 text-sm font-semibold text-paper">
+          <p role="status" className="banner-success m-0 rounded-[5px] bg-signal px-3.5 py-2.5 text-sm font-semibold text-ink">
             {success}
           </p>
         )}
