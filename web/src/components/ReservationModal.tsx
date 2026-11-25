@@ -90,6 +90,7 @@ function Checkout({
         expiresAt: r.expiresAt ?? now + HOLD_WINDOW_SECONDS * 1000,
         idempotencyKey: keyRef.current,
         traceparent: r.traceparent,
+        payment: r.payment,
       })
       onClose()
     } catch (e) {

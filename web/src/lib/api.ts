@@ -13,6 +13,21 @@ export interface EventItem {
 
 export type ReservationStatus = 'held' | 'confirmed' | 'cancelled' | 'expired' | (string & {})
 
+/**
+ * Present only when the backend runs with PAYMENT_MODE=checkout. In the default
+ * automatic mode the worker settles holds itself and this is undefined.
+ */
+export type PaymentStatus = 'awaiting' | 'processing' | 'declined' | 'succeeded'
+
+export interface PaymentInfo {
+  status: PaymentStatus
+  attempts: number
+  failureReason?: string
+}
+
+/** Simulated outcome the customer asks for. It is a test switch, never card data. */
+export type PaymentScenario = 'approve' | 'decline'
+
 export interface Reservation {
   id: string
   eventId: string
@@ -21,6 +36,7 @@ export interface Reservation {
   expiresAt?: number
   createdAt?: number
   traceparent?: string
+  payment?: PaymentInfo
 }
 
 export interface CallRecord {
@@ -224,6 +240,19 @@ function stripFlag(e: EventItem & { availableKnown: boolean }): EventItem {
   return { id: e.id, name: e.name, startsAt: e.startsAt, capacity: e.capacity, available: e.available }
 }
 
+const PAYMENT_STATUSES: readonly string[] = ['awaiting', 'processing', 'declined', 'succeeded']
+
+function toPayment(raw: unknown): PaymentInfo | undefined {
+  const r = asRecord(raw)
+  const status = str(r?.status)?.toLowerCase()
+  if (!r || !status || !PAYMENT_STATUSES.includes(status)) return undefined
+  return {
+    status: status as PaymentStatus,
+    attempts: num(r.attempts) ?? 0,
+    failureReason: str(r.failure_reason) ?? str(r.failureReason),
+  }
+}
+
 function toReservation(raw: unknown, fallbackTraceparent?: string): Reservation {
   const r = asRecord(raw)
   if (!r) throw new ApiError(500, 'The API returned an unexpected reservation response.')
@@ -239,6 +268,7 @@ function toReservation(raw: unknown, fallbackTraceparent?: string): Reservation 
     expiresAt: time(r.expires_at) ?? time(r.expiresAt) ?? time(r.hold_expires_at) ?? time(r.held_until),
     createdAt: time(r.created_at) ?? time(r.createdAt),
     traceparent: str(r.traceparent) ?? fallbackTraceparent,
+    payment: toPayment(r.payment),
   }
 }
 
@@ -314,5 +344,25 @@ export const api = {
   async getReservation(token: string, id: string, signal?: AbortSignal): Promise<Reservation> {
     const { data } = await request('GET', `/v1/reservations/${id}`, { token, signal, quiet: true })
     return toReservation(data)
+  },
+
+  /**
+   * Start a payment attempt on a held reservation (PAYMENT_MODE=checkout).
+   * Answers 202 straight away; the worker settles it asynchronously, so keep
+   * polling getReservation for the outcome. Reuse the key to retry the same
+   * attempt, and use a new key for a new attempt after a decline.
+   */
+  async pay(
+    token: string,
+    reservationId: string,
+    scenario: PaymentScenario,
+    idempotencyKey: string,
+  ): Promise<Reservation> {
+    const { data, traceparent } = await request('POST', `/v1/reservations/${reservationId}/payment`, {
+      token,
+      body: { scenario },
+      headers: { 'Idempotency-Key': idempotencyKey },
+    })
+    return toReservation(data, traceparent)
   },
 }

@@ -3,14 +3,18 @@
 // out, 429 rate limits, a `traceparent` header, and an async held -> settled saga.
 //
 //   MOCK_PORT          default 8787
-//   MOCK_PAYMENT       approve (default) | reject | random | stall
+//   MOCK_MODE          checkout (default) | auto. Mirrors the backend's PAYMENT_MODE:
+//                      checkout holds wait for POST /v1/reservations/{id}/payment ("Pay now"),
+//                      auto settles holds by itself using MOCK_PAYMENT below.
+//   MOCK_PAYMENT       approve (default) | reject | random | stall   (auto mode only)
 //   MOCK_HOLD_SECONDS  default 600 (use e.g. 20 with MOCK_PAYMENT=stall to see expiry)
-//   MOCK_SETTLE_MS     default 3500 (time the "worker" takes to settle payment)
+//   MOCK_SETTLE_MS     default 3500 (time the "worker" takes to settle a payment)
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 
 const PORT = Number(process.env.MOCK_PORT ?? 8787)
 const PAYMENT = process.env.MOCK_PAYMENT ?? 'approve'
+const MODE = process.env.MOCK_MODE === 'auto' ? 'auto' : 'checkout'
 const HOLD_MS = Number(process.env.MOCK_HOLD_SECONDS ?? 600) * 1000
 const SETTLE_MS = Number(process.env.MOCK_SETTLE_MS ?? 3500)
 
@@ -82,21 +86,57 @@ const publicReservation = (r) => ({
   created_at: r.created_at,
   expires_at: r.expires_at,
   traceparent: r.traceparent,
+  ...(MODE === 'checkout' ? { payment: paymentView(r) } : {}),
 })
+
+// Mirrors the backend's `payment` object: awaiting | processing | declined | succeeded.
+function paymentView(r) {
+  const latest = r.payments.at(-1)
+  if (!latest) return r.status === 'held' ? { status: 'awaiting', attempts: 0 } : undefined
+  return {
+    status: latest.status,
+    attempts: r.payments.length,
+    payment_id: latest.id,
+    ...(latest.failure_reason ? { failure_reason: latest.failure_reason } : {}),
+  }
+}
 
 function settle(r) {
   const finish = (status) => {
     if (r.status !== 'held') return
     r.status = status
+    for (const p of r.payments) if (p.status === 'processing') Object.assign(p, { status: 'declined', failure_reason: 'hold_expired' })
     if (status !== 'confirmed') events.get(r.event_id).available += r.quantity
     console.log(`[saga] ${r.id.slice(0, 8)} -> ${status}`)
   }
+  setTimeout(() => finish('expired'), HOLD_MS)
+  if (MODE === 'checkout') return
   setTimeout(() => {
     if (PAYMENT === 'stall') return
     const approve = PAYMENT === 'approve' || (PAYMENT === 'random' && Math.random() > 0.35)
     finish(approve ? 'confirmed' : 'cancelled')
   }, SETTLE_MS + Math.random() * 1500)
-  setTimeout(() => finish('expired'), HOLD_MS)
+}
+
+// The worker's side of a Pay now attempt: wait, then settle exactly like the backend.
+function settlePayment(r, attempt) {
+  setTimeout(() => {
+    if (attempt.status !== 'processing') return
+    if (r.status !== 'held' || Date.parse(r.expires_at) <= Date.now()) {
+      attempt.status = 'declined'
+      attempt.failure_reason = 'hold_expired'
+      return
+    }
+    if (attempt.scenario === 'decline') {
+      attempt.status = 'declined'
+      attempt.failure_reason = 'card_declined' // the hold stays open for a retry
+      console.log(`[saga] ${r.id.slice(0, 8)} payment declined, hold still open`)
+      return
+    }
+    attempt.status = 'succeeded'
+    r.status = 'confirmed'
+    console.log(`[saga] ${r.id.slice(0, 8)} -> confirmed`)
+  }, SETTLE_MS + Math.random() * 1000)
 }
 
 const server = createServer(async (req, res) => {
@@ -180,12 +220,43 @@ const server = createServer(async (req, res) => {
       expires_at: new Date(now + HOLD_MS).toISOString(),
       traceparent: traceparent(),
       owner: user,
+      payments: [],
     }
     reservations.set(r.id, r)
     settle(r)
     const body = publicReservation(r)
     idempotent.set(`${user}:${key}`, { status: 201, body, traceparent: r.traceparent })
     return send(res, 201, body, { traceparent: r.traceparent })
+  }
+
+  m = /^\/v1\/reservations\/([^/]+)\/payment$/.exec(path)
+  if (m && method === 'POST') {
+    const wait = limited(`pay:${user}`, 10)
+    if (wait) return send(res, 429, { error: 'rate limit exceeded' }, { 'Retry-After': String(wait) })
+    const key = req.headers['idempotency-key']
+    if (!key) return send(res, 400, { error: 'Idempotency-Key header is required' })
+    const b = await readBody(req)
+    if (!b || Object.keys(b).some((k) => k !== 'scenario')) return send(res, 400, { error: 'invalid request body' })
+    const scenario = String(b.scenario ?? 'approve').trim().toLowerCase()
+    if (scenario !== 'approve' && scenario !== 'decline') return send(res, 400, { error: 'scenario must be approve or decline' })
+    const r = reservations.get(m[1])
+    if (!r || r.owner !== user) return send(res, 404, { error: 'reservation not found' })
+
+    // Same order as the backend: replay first, then state checks.
+    const prior = r.payments.find((p) => p.key === key)
+    if (prior) {
+      if (prior.scenario !== scenario) return send(res, 409, { error: 'idempotency key reused with a different request' })
+      return send(res, 202, publicReservation(r), { traceparent: r.traceparent })
+    }
+    if (MODE !== 'checkout') return send(res, 409, { error: 'payments are settled automatically' })
+    if (r.status !== 'held') return send(res, 409, { error: 'reservation is not payable' })
+    if (Date.parse(r.expires_at) <= Date.now()) return send(res, 409, { error: 'hold has expired' })
+    if (r.payments.some((p) => p.status === 'processing')) return send(res, 409, { error: 'a payment is already in progress' })
+
+    const attempt = { id: randomUUID(), key, scenario, status: 'processing' }
+    r.payments.push(attempt)
+    settlePayment(r, attempt)
+    return send(res, 202, publicReservation(r), { traceparent: r.traceparent })
   }
 
   m = /^\/v1\/reservations\/([^/]+)$/.exec(path)
@@ -198,5 +269,5 @@ const server = createServer(async (req, res) => {
 })
 
 server.listen(PORT, () => {
-  console.log(`Mock OrderFlow API on http://localhost:${PORT}  (payment=${PAYMENT}, hold=${HOLD_MS / 1000}s)`)
+  console.log(`Mock OrderFlow API on http://localhost:${PORT}  (mode=${MODE}, payment=${PAYMENT}, hold=${HOLD_MS / 1000}s)`)
 })
