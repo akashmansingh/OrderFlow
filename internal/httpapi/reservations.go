@@ -25,6 +25,12 @@ type createReservationRequest struct {
 	Quantity int `json:"quantity"`
 }
 
+// payReservationRequest carries the simulated gateway outcome. Card details are
+// deliberately not part of the contract: unknown fields are rejected.
+type payReservationRequest struct {
+	Scenario string `json:"scenario"`
+}
+
 func (server *Server) createEvent(response http.ResponseWriter, request *http.Request) {
 	var body createEventRequest
 	if err := decodeJSON(response, request, &body); err != nil {
@@ -118,6 +124,40 @@ func (server *Server) getReservation(response http.ResponseWriter, request *http
 	writeJSON(response, http.StatusOK, reservationRecord)
 }
 
+// payReservation accepts a payment attempt for a held reservation. The worker settles it
+// asynchronously, so success is 202 Accepted: poll GET /v1/reservations/{id} for the outcome.
+func (server *Server) payReservation(response http.ResponseWriter, request *http.Request) {
+	idempotencyKey := request.Header.Get("Idempotency-Key")
+	if idempotencyKey == "" {
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "Idempotency-Key header is required"})
+		return
+	}
+
+	customerID, ok := subjectFromContext(request.Context())
+	if !ok {
+		server.writeUnauthorized(response)
+		return
+	}
+
+	var body payReservationRequest
+	if err := decodeJSON(response, request, &body); err != nil {
+		return
+	}
+
+	reservationRecord, err := server.service.PayReservation(request.Context(), reservation.PayReservationInput{
+		ReservationID:  request.PathValue("reservationID"),
+		CustomerID:     customerID,
+		Scenario:       strings.ToLower(strings.TrimSpace(body.Scenario)),
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		server.writeServiceError(response, err)
+		return
+	}
+
+	writeJSON(response, http.StatusAccepted, reservationRecord)
+}
+
 func (server *Server) writeServiceError(response http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, reservation.ErrEventNotFound), errors.Is(err, reservation.ErrReservationNotFound):
@@ -126,6 +166,13 @@ func (server *Server) writeServiceError(response http.ResponseWriter, err error)
 		writeJSON(response, http.StatusConflict, map[string]string{"error": err.Error()})
 	case errors.Is(err, reservation.ErrIdempotencyConflict):
 		writeJSON(response, http.StatusConflict, map[string]string{"error": err.Error()})
+	case errors.Is(err, reservation.ErrReservationNotPayable),
+		errors.Is(err, reservation.ErrHoldExpired),
+		errors.Is(err, reservation.ErrPaymentInProgress),
+		errors.Is(err, reservation.ErrPaymentsAutomatic):
+		writeJSON(response, http.StatusConflict, map[string]string{"error": err.Error()})
+	case errors.Is(err, reservation.ErrInvalidPaymentScenario):
+		writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	default:
 		server.logger.Error("request failed", "error", err)
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": err.Error()})

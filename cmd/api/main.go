@@ -71,7 +71,8 @@ func run(logger *slog.Logger) error {
 	defer databasePool.Close()
 
 	reservationService := reservation.NewService(databasePool, configuration.ReservationHold).
-		WithFeatureFlags(configuration.CacheEnabled, configuration.SoldOutFastPath)
+		WithFeatureFlags(configuration.CacheEnabled, configuration.SoldOutFastPath).
+		WithPaymentMode(configuration.PaymentMode)
 	authService := auth.NewService(auth.NewPostgresStore(databasePool), tokenManager)
 
 	var redisClient *cache.Client

@@ -116,6 +116,60 @@ func TestLoadRejectsUnsupportedSimulatedPaymentResult(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsToAutomaticPayment(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
+	t.Setenv("PAYMENT_MODE", "")
+	t.Setenv("PAYMENT_PROCESSING_SECONDS", "")
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.PaymentMode != config.PaymentModeAuto {
+		t.Fatalf("PaymentMode = %q, want %q", loaded.PaymentMode, config.PaymentModeAuto)
+	}
+	if loaded.PaymentProcessingDelay != 0 {
+		t.Fatalf("PaymentProcessingDelay = %s, want 0", loaded.PaymentProcessingDelay)
+	}
+}
+
+func TestLoadReadsCheckoutPaymentSettings(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
+	t.Setenv("PAYMENT_MODE", " Checkout ")
+	t.Setenv("PAYMENT_PROCESSING_SECONDS", "3")
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.PaymentMode != config.PaymentModeCheckout {
+		t.Fatalf("PaymentMode = %q, want %q", loaded.PaymentMode, config.PaymentModeCheckout)
+	}
+	if loaded.PaymentProcessingDelay != 3*time.Second {
+		t.Fatalf("PaymentProcessingDelay = %s, want 3s", loaded.PaymentProcessingDelay)
+	}
+}
+
+func TestLoadRejectsUnsupportedPaymentMode(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
+	t.Setenv("PAYMENT_MODE", "stripe")
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "PAYMENT_MODE") {
+		t.Fatalf("Load() error = %v, want payment mode validation error", err)
+	}
+}
+
+func TestLoadRejectsInvalidPaymentProcessingSeconds(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
+	t.Setenv("PAYMENT_PROCESSING_SECONDS", "-1")
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "PAYMENT_PROCESSING_SECONDS") {
+		t.Fatalf("Load() error = %v, want processing seconds validation error", err)
+	}
+}
+
 func TestLoadAPIRequiresJWTSecret(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://orderflow:password@postgres:5432/orderflow?sslmode=disable")
 	t.Setenv("JWT_SECRET", "")

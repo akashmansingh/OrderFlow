@@ -88,6 +88,13 @@ func loginKey(request *http.Request) string {
 	return fmt.Sprintf("ratelimit:login:%s", clientIP(request))
 }
 
+func paymentKey(request *http.Request) string {
+	if subject, ok := subjectFromContext(request.Context()); ok {
+		return fmt.Sprintf("ratelimit:payment:%s", subject)
+	}
+	return fmt.Sprintf("ratelimit:payment:%s", clientIP(request))
+}
+
 func reservationKey(request *http.Request) string {
 	if subject, ok := subjectFromContext(request.Context()); ok {
 		return fmt.Sprintf("ratelimit:reservation:%s", subject)

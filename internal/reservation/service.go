@@ -44,6 +44,8 @@ type Reservation struct {
 	Status     string     `json:"status"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
+	// Payment is only present when PAYMENT_MODE=checkout and the reservation has a payment to show.
+	Payment *Payment `json:"payment,omitempty"`
 }
 
 type CreateEventInput struct {
@@ -72,6 +74,7 @@ type Service struct {
 	soldOutTTL      time.Duration
 	cacheEnabled    bool
 	soldOutFastPath bool
+	paymentMode     string
 	sfGroup         singleflight.Group
 }
 
@@ -222,7 +225,11 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 		if !bytes.Equal(existingRequestHash, input.RequestHash) {
 			return Reservation{}, ErrIdempotencyConflict
 		}
-		return getReservation(ctx, tx, existingReservationID)
+		existing, err := getReservation(ctx, tx, existingReservationID)
+		if err != nil {
+			return Reservation{}, err
+		}
+		return service.withPayment(ctx, tx, existing)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Reservation{}, fmt.Errorf("read idempotency key: %w", err)
@@ -298,6 +305,10 @@ func (service *Service) CreateReservation(ctx context.Context, input CreateReser
 
 	span.SetAttributes(attribute.String("reservation.id", reservation.ID))
 	span.SetStatus(codes.Ok, "reservation held")
+	if service.checkoutEnabled() {
+		// A new hold has no attempts yet; it is waiting for the customer to pay.
+		reservation.Payment = &Payment{Status: PaymentAwaiting}
+	}
 	return reservation, nil
 }
 
@@ -310,7 +321,10 @@ func (service *Service) GetReservation(ctx context.Context, reservationID string
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Reservation{}, ErrReservationNotFound
 	}
-	return reservation, err
+	if err != nil {
+		return Reservation{}, err
+	}
+	return service.withPayment(ctx, service.database, reservation)
 }
 
 // GetReservationForCustomer prevents one authenticated user from reading another user's reservation.

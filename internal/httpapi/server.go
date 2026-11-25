@@ -24,6 +24,7 @@ type reservationService interface {
 	ListEvents(context.Context) ([]reservation.Event, error)
 	CreateReservation(context.Context, reservation.CreateReservationInput) (reservation.Reservation, error)
 	GetReservationForCustomer(context.Context, string, string) (reservation.Reservation, error)
+	PayReservation(context.Context, reservation.PayReservationInput) (reservation.Reservation, error)
 }
 
 // authenticator is the auth behavior required by the HTTP layer.
@@ -99,6 +100,7 @@ func (server *Server) buildRoutes() {
 	mux.Handle("GET /v1/events/{eventID}", server.requireAuth(http.HandlerFunc(server.getEvent)))
 	mux.Handle("POST /v1/events/{eventID}/reservations", server.requireAuth(server.rateLimit(server.reservationLimit, time.Minute, reservationKey)(http.HandlerFunc(server.createReservation))))
 	mux.Handle("GET /v1/reservations/{reservationID}", server.requireAuth(http.HandlerFunc(server.getReservation)))
+	mux.Handle("POST /v1/reservations/{reservationID}/payment", server.requireAuth(server.rateLimit(server.reservationLimit, time.Minute, paymentKey)(http.HandlerFunc(server.payReservation))))
 	server.handler = server.recoverPanics(server.cors(TracingMiddleware(server.instrument(server.logRequests(mux)))))
 }
 
