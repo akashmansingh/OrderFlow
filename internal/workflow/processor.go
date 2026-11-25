@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/theRiddler9/OrderFlow/internal/config"
 	"github.com/theRiddler9/OrderFlow/internal/events"
 	"github.com/theRiddler9/OrderFlow/internal/metrics"
 	"github.com/theRiddler9/OrderFlow/internal/tracing"
@@ -32,12 +33,23 @@ type inventoryCache interface {
 type Processor struct {
 	database      *pgxpool.Pool
 	paymentResult string
+	paymentMode   string
+	paymentDelay  time.Duration
 	cache         inventoryCache
 	metrics       *metrics.Metrics
 }
 
 func NewProcessor(database *pgxpool.Pool, paymentResult string) *Processor {
-	return &Processor{database: database, paymentResult: paymentResult}
+	return &Processor{database: database, paymentResult: paymentResult, paymentMode: config.PaymentModeAuto}
+}
+
+// WithPayments selects how holds are settled. In checkout mode a hold waits for the
+// customer to pay and the simulated gateway takes delay to answer; in auto mode the
+// worker settles every hold itself using the configured simulated result.
+func (processor *Processor) WithPayments(mode string, delay time.Duration) *Processor {
+	processor.paymentMode = mode
+	processor.paymentDelay = delay
+	return processor
 }
 
 func (processor *Processor) WithCache(cache inventoryCache) *Processor {
@@ -70,14 +82,24 @@ func (processor *Processor) Handle(ctx context.Context, event events.Envelope) e
 		}
 	}()
 
-	if isTerminalEvent(event.Type) {
+	if isTerminalEvent(event.Type) || isPaymentOutcomeEvent(event.Type) {
 		if processor.metrics != nil {
 			processor.metrics.WorkerEventsProcessedTotal.WithLabelValues(event.Type, "ignored").Inc()
 		}
 		return nil
 	}
+	if event.Type == paymentRequestedEvent {
+		return processor.handlePaymentRequested(ctx, event)
+	}
 	if event.Type != "reservation.held.v1" {
 		return fmt.Errorf("unsupported event type %q", event.Type)
+	}
+	if processor.paymentMode == config.PaymentModeCheckout {
+		// The customer settles this hold by paying; expiry releases it if they do not.
+		if processor.metrics != nil {
+			processor.metrics.WorkerEventsProcessedTotal.WithLabelValues(event.Type, "awaiting_payment").Inc()
+		}
+		return nil
 	}
 	if processor.database == nil {
 		return fmt.Errorf("workflow database is required")

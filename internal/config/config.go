@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+const (
+	// PaymentModeAuto lets the worker settle every hold on its own using
+	// SIMULATED_PAYMENT_RESULT. It is the default and what load tests use.
+	PaymentModeAuto = "auto"
+	// PaymentModeCheckout leaves a hold open until the customer pays through the API.
+	PaymentModeCheckout = "checkout"
+)
+
 // Config contains process configuration supplied by the environment.
 type Config struct {
 	Environment                   string
@@ -21,6 +29,8 @@ type Config struct {
 	KafkaGroupID                  string
 	WorkerPollInterval            time.Duration
 	SimulatedPaymentResult        string
+	PaymentMode                   string
+	PaymentProcessingDelay        time.Duration
 	JWTSecret                     string
 	JWTAccessTokenMinutes         int
 	JWTIssuer                     string
@@ -58,6 +68,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	paymentResult, err := paymentResultFromEnv()
+	if err != nil {
+		return Config{}, err
+	}
+	paymentMode, err := paymentModeFromEnv()
+	if err != nil {
+		return Config{}, err
+	}
+	paymentDelay, err := durationFromEnv("PAYMENT_PROCESSING_SECONDS", 0)
 	if err != nil {
 		return Config{}, err
 	}
@@ -113,6 +131,8 @@ func Load() (Config, error) {
 		KafkaGroupID:                  valueOrDefault("KAFKA_GROUP_ID", "orderflow-workflow-worker"),
 		WorkerPollInterval:            pollInterval,
 		SimulatedPaymentResult:        paymentResult,
+		PaymentMode:                   paymentMode,
+		PaymentProcessingDelay:        paymentDelay,
 		JWTSecret:                     os.Getenv("JWT_SECRET"),
 		JWTAccessTokenMinutes:         accessTokenMinutes,
 		JWTIssuer:                     valueOrDefault("JWT_ISSUER", "orderflow"),
@@ -186,6 +206,14 @@ func paymentResultFromEnv() (string, error) {
 		return "", fmt.Errorf("SIMULATED_PAYMENT_RESULT must be approve or reject")
 	}
 	return result, nil
+}
+
+func paymentModeFromEnv() (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(valueOrDefault("PAYMENT_MODE", PaymentModeAuto)))
+	if mode != PaymentModeAuto && mode != PaymentModeCheckout {
+		return "", fmt.Errorf("PAYMENT_MODE must be auto or checkout")
+	}
+	return mode, nil
 }
 
 func positiveIntFromEnv(key string, fallback int) (int, error) {

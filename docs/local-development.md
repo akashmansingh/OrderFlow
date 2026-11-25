@@ -113,6 +113,16 @@ docker compose logs --follow worker
 
 Use `SIMULATED_PAYMENT_RESULT=reject` in your local `.env` to demonstrate cancellation and inventory release. Keep the default `approve` for the normal flow.
 
+### Pay now (checkout mode)
+
+By default (`PAYMENT_MODE=auto`) the worker settles every hold itself. To let the customer drive the payment, start the stack with:
+
+```powershell
+$env:PAYMENT_MODE = "checkout"; docker compose up -d --build --wait
+```
+
+Holds then stay open until `POST /v1/reservations/{id}/payment` is called (the web UI's "Pay now" button does this). The worker waits `PAYMENT_PROCESSING_SECONDS` (default 3 in Compose) before settling, so the "Processing" state is visible. A simulated decline keeps the hold open for a retry. Return to `auto` before running load tests or benchmarks. The opt-in e2e tests in `tests/e2e/payment_test.go` need checkout mode and skip otherwise.
+
 ## Authenticate API requests
 
 Register and log in before calling event or reservation routes:

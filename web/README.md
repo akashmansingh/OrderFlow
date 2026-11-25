@@ -20,7 +20,7 @@ Without Docker, against a mock that follows the same API contract:
 npm run demo         # mock API on :8787 + web on :5173
 ```
 
-Mock knobs: `MOCK_PAYMENT=approve|reject|random|stall`, `MOCK_HOLD_SECONDS`, `MOCK_SETTLE_MS`.
+Mock knobs: `MOCK_MODE=checkout|auto` (default `checkout`, mirrors the backend's `PAYMENT_MODE`), `MOCK_PAYMENT=approve|reject|random|stall` (auto mode only), `MOCK_HOLD_SECONDS`, `MOCK_SETTLE_MS`.
 
 ## Screens
 
@@ -29,7 +29,7 @@ Mock knobs: `MOCK_PAYMENT=approve|reject|random|stall`, `MOCK_HOLD_SECONDS`, `MO
 | `AuthModal` | Register and sign-in tabs. Stores the JWT, sends `Authorization: Bearer`, signs out on a 401 or when the token expires. |
 | `EventList` / `EventCard` | Events as tickets. The stub shows live availability (polled every 2.5s) and flips when it changes. `Create demo event` adds Coldplay Live (50) and others. |
 | `ReservationModal` | Quantity 1 to 10, one `Idempotency-Key` (UUID v4) per checkout session, reused on retries. Handles 409 (sold out) and 429 (countdown from `Retry-After`). |
-| `ReservationStatus` | 10-minute hold countdown, Held / Payment / Result stepper, status stamp. Polls `GET /v1/reservations/{id}` every 1.5s until it reaches a terminal state, and resumes after a refresh. |
+| `ReservationStatus` | 10-minute hold countdown, Held / Payment / Result stepper, status stamp. When the backend runs with `PAYMENT_MODE=checkout` it shows a **Pay now** button (opens `PaymentModal`), a Processing step, and a retry after a decline. Polls `GET /v1/reservations/{id}` every 1.5s until it reaches a terminal state, and resumes after a refresh. |
 | `TraceInspector` | Idempotency key, `traceparent`, parsed trace ID, link to `{JAEGER_URL}/trace/{traceId}`, Grafana link, and a log of recent API calls. |
 
 ## Backend assumptions to check

@@ -53,6 +53,14 @@ type fakeReservationService struct {
 	createdInputs      []reservation.CreateReservationInput
 	checkedCustomers   []string
 	createdReservation reservation.Reservation
+	paidInputs         []reservation.PayReservationInput
+	payResult          reservation.Reservation
+	payErr             error
+}
+
+func (service *fakeReservationService) PayReservation(_ context.Context, input reservation.PayReservationInput) (reservation.Reservation, error) {
+	service.paidInputs = append(service.paidInputs, input)
+	return service.payResult, service.payErr
 }
 
 func (service *fakeReservationService) CreateEvent(context.Context, reservation.CreateEventInput) (reservation.Event, error) {

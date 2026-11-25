@@ -173,6 +173,7 @@ GOOS=linux CGO_ENABLED=0 go build -o bin/api-linux ./cmd/api
 GOOS=linux CGO_ENABLED=0 go build -o bin/worker-linux ./cmd/worker
 
 # Start Docker environment with resource limits
+# (PAYMENT_MODE must stay at its default, auto; all numbers here were measured in auto mode)
 docker compose up -d
 ```
 

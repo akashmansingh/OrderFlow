@@ -289,6 +289,10 @@ func (s *stubRes) GetReservationForCustomer(ctx context.Context, resID, custID s
 	return reservation.Reservation{ID: resID, CustomerID: custID}, nil
 }
 
+func (s *stubRes) PayReservation(ctx context.Context, in reservation.PayReservationInput) (reservation.Reservation, error) {
+	return reservation.Reservation{ID: in.ReservationID, CustomerID: in.CustomerID, Status: "held"}, nil
+}
+
 func TestRateLimitingDisabledByFlag(t *testing.T) {
 	server := miniredis.RunT(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

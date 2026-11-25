@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { useCountdown } from '../hooks/useCountdown'
 import type { Hold } from '../hooks/useHolds'
-import { api, ApiError, isAbort, isTerminal } from '../lib/api'
+import { api, ApiError, isAbort, isTerminal, type PaymentInfo } from '../lib/api'
 import { HOLD_WINDOW_SECONDS, RESERVATION_POLL_MS } from '../lib/config'
 import { formatClock, formatEventDate, plural } from '../lib/format'
+import { PaymentModal } from './PaymentModal'
 
 interface ReservationStatusProps {
   hold: Hold
   token: string
   isNew?: boolean
-  onUpdate: (id: string, patch: { status?: string; expiresAt?: number }) => void
+  onUpdate: (id: string, patch: { status?: string; expiresAt?: number; payment?: PaymentInfo }) => void
   onInspect: (id: string) => void
 }
 
@@ -22,7 +23,30 @@ interface Step {
 }
 
 /** Maps the backend status onto the three stations of the saga. */
-function stepsFor(status: string): Step[] {
+function stepsFor(status: string, payment?: PaymentInfo): Step[] {
+  if (status === 'held' && payment) {
+    // Checkout mode: the customer drives the payment step.
+    switch (payment.status) {
+      case 'processing':
+        return [
+          { label: 'Held', state: 'done', tone: 'hold' },
+          { label: 'Processing', state: 'active', tone: 'hold' },
+          { label: 'Result', state: 'todo', tone: 'hold' },
+        ]
+      case 'declined':
+        return [
+          { label: 'Held', state: 'done', tone: 'hold' },
+          { label: 'Declined', state: 'fail', tone: 'bad' },
+          { label: 'Result', state: 'todo', tone: 'hold' },
+        ]
+      default:
+        return [
+          { label: 'Held', state: 'done', tone: 'hold' },
+          { label: 'Pay now', state: 'active', tone: 'hold' },
+          { label: 'Result', state: 'todo', tone: 'hold' },
+        ]
+    }
+  }
   switch (status) {
     case 'confirmed':
       return [
@@ -53,8 +77,8 @@ function stepsFor(status: string): Step[] {
 
 const toneBg: Record<Tone, string> = { hold: 'bg-marigold', ok: 'bg-signal', bad: 'bg-vermilion' }
 
-function Stepper({ status }: { status: string }) {
-  const steps = stepsFor(status)
+function Stepper({ status, payment }: { status: string; payment?: PaymentInfo }) {
+  const steps = stepsFor(status, payment)
   return (
     <ol className="m-0 flex list-none items-start p-0" aria-label="Reservation progress">
       {steps.map((step, i) => {
@@ -63,7 +87,7 @@ function Stepper({ status }: { status: string }) {
         const connectorLit = lit && next && next.state !== 'todo'
         return (
           <li key={step.label} className={`flex items-start ${i < steps.length - 1 ? 'flex-1' : ''}`}>
-            <div className="flex w-14 sm:w-16 flex-col items-center gap-1.5 text-center">
+            <div className="flex w-[4.5rem] flex-col items-center gap-1.5 text-center">
               <span
                 className={`block size-[18px] rounded-full border-2 border-ink ${
                   step.state === 'todo' ? 'bg-transparent opacity-40' : toneBg[step.tone]
@@ -122,10 +146,25 @@ const MESSAGES: Record<string, string> = {
   expired: 'Hold expired. Your tickets are back on sale.',
 }
 
+function messageFor(status: string, payment?: PaymentInfo): string {
+  if (status === 'held' && payment) {
+    switch (payment.status) {
+      case 'processing':
+        return 'Processing your payment…'
+      case 'declined':
+        return 'Payment declined. Your tickets are still held. Try again before the time runs out.'
+      default:
+        return 'Tickets held. Pay now to confirm them before the time runs out.'
+    }
+  }
+  return MESSAGES[status] ?? MESSAGES.held
+}
+
 export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: ReservationStatusProps) {
   const terminal = isTerminal(hold.status)
   const secondsLeft = useCountdown(hold.expiresAt, !terminal)
   const [linkIssue, setLinkIssue] = useState<string | null>(null)
+  const [paying, setPaying] = useState(false)
 
   // Only slam the stamp if the status settles while we're watching.
   const watchedLive = useRef(!terminal)
@@ -148,7 +187,7 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
         const r = await api.getReservation(token, hold.id, controller.signal)
         if (cancelled) return
         setLinkIssue(null)
-        onUpdateRef.current(hold.id, { status: r.status, expiresAt: r.expiresAt })
+        onUpdateRef.current(hold.id, { status: r.status, expiresAt: r.expiresAt, payment: r.payment })
         if (isTerminal(r.status)) return
       } catch (e) {
         if (cancelled || isAbort(e)) return
@@ -171,9 +210,12 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
   }, [hold.id, token, terminal])
 
   const confirmed = hold.status === 'confirmed'
-  const message = MESSAGES[hold.status] ?? MESSAGES.held
+  const message = messageFor(hold.status, hold.payment)
+  const payStatus = hold.payment?.status
   const date = formatEventDate(hold.eventStartsAt)
   const windowOver = !terminal && secondsLeft === 0
+  const canPay = !terminal && !windowOver && (payStatus === 'awaiting' || payStatus === 'declined')
+  const processing = !terminal && payStatus === 'processing'
 
   return (
     <li className={`ticket-wrap list-none ${isNew ? 'hold-new rounded-lg' : ''}`}>
@@ -217,7 +259,7 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
         )}
 
         <div className="mt-5">
-          <Stepper status={hold.status} />
+          <Stepper status={hold.status} payment={hold.payment} />
         </div>
 
         <p role="status" className="mb-0 mt-4 text-[0.95rem] font-semibold leading-snug">
@@ -225,12 +267,29 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
         </p>
         {linkIssue && <p className="mb-0 mt-1 text-sm text-ink/60">{linkIssue}</p>}
 
-        <div className="mt-4 flex items-center justify-end gap-3 border-t-2 border-dashed border-ink/25 pt-3">
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-3 border-t-2 border-dashed border-ink/25 pt-3">
+          {(canPay || processing) && (
+            <button
+              type="button"
+              className="btn btn-ink btn-sm mr-auto"
+              disabled={processing}
+              onClick={() => setPaying(true)}
+            >
+              {processing ? 'Processing…' : payStatus === 'declined' ? 'Try again' : 'Pay now'}
+            </button>
+          )}
           <button type="button" className="btn btn-outline-ink btn-sm" onClick={() => onInspect(hold.id)}>
             Inspect trace
           </button>
         </div>
       </article>
+      <PaymentModal
+        hold={paying ? hold : null}
+        onClose={() => setPaying(false)}
+        onAccepted={(h, r) =>
+          onUpdate(h.id, { status: r.status, expiresAt: r.expiresAt, payment: r.payment })
+        }
+      />
     </li>
   )
 }

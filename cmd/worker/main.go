@@ -107,7 +107,9 @@ func run(logger *slog.Logger) error {
 
 	publisher := messaging.NewPublisher(producerClient, configuration.KafkaTopic)
 	relay := outbox.NewRelay(outbox.NewPostgresStore(databasePool, 30*time.Second), publisher, configuration.WorkerPollInterval).WithMetrics(metricsCollector)
-	processor := workflow.NewProcessor(databasePool, configuration.SimulatedPaymentResult).WithMetrics(metricsCollector)
+	processor := workflow.NewProcessor(databasePool, configuration.SimulatedPaymentResult).
+		WithPayments(configuration.PaymentMode, configuration.PaymentProcessingDelay).
+		WithMetrics(metricsCollector)
 	expiry := workflow.NewExpiry(databasePool).WithMetrics(metricsCollector)
 
 	if configuration.RedisAddress != "" {
@@ -135,7 +137,7 @@ func run(logger *slog.Logger) error {
 
 	go runRelay(ctx, logger, relay)
 	go runExpiry(ctx, logger, expiry, configuration.WorkerPollInterval)
-	logger.Info("worker started", "topic", configuration.KafkaTopic, "group", configuration.KafkaGroupID)
+	logger.Info("worker started", "topic", configuration.KafkaTopic, "group", configuration.KafkaGroupID, "payment_mode", configuration.PaymentMode)
 
 	dlqPublisher := NewKafkaDLQPublisher(producerClient, configuration.KafkaTopic+"-dlq")
 

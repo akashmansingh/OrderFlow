@@ -36,6 +36,10 @@ func (s *corsStubService) GetReservationForCustomer(context.Context, string, str
 	return reservation.Reservation{}, nil
 }
 
+func (s *corsStubService) PayReservation(context.Context, reservation.PayReservationInput) (reservation.Reservation, error) {
+	return reservation.Reservation{}, nil
+}
+
 func TestCORSPreflightAndHeaders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	auth := newStubAuthenticator()

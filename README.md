@@ -217,6 +217,10 @@ WORKER_POLL_SECONDS=1
 # Saga Payment Simulation (approve | reject)
 SIMULATED_PAYMENT_RESULT=approve
 
+# auto (default) | checkout: customer presses "Pay now" (see ADR 0007)
+PAYMENT_MODE=auto
+PAYMENT_PROCESSING_SECONDS=3
+
 # OpenTelemetry & Distributed Tracing
 OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 ORDERFLOW_TRACING_ENABLED=true
@@ -260,6 +264,7 @@ Access the application at **`http://localhost:5173`**:
 | `GET` | `/v1/events/{id}` | Bearer | Retrieve event details and availability |
 | `POST` | `/v1/events/{id}/reservations` | Bearer | Hold tickets atomically (Requires `Idempotency-Key` header) |
 | `GET` | `/v1/reservations/{id}` | Bearer | Check asynchronous reservation settlement status |
+| `POST` | `/v1/reservations/{id}/payment` | Bearer | Pay a held reservation in `PAYMENT_MODE=checkout` (Requires `Idempotency-Key`; body `{"scenario":"approve"\|"decline"}` is a simulated outcome, never card data) |
 | `GET` | `/metrics` | Public | Prometheus scraping endpoint |
 
 ---
