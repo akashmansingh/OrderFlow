@@ -50,7 +50,7 @@ The relay publishes committed outbox records and marks them delivered only after
 
 ### Workflow worker
 
-Consume reservation events, simulate payment outcomes, update reservation state transactionally, and emit follow-up events through the outbox. Processing is at least once. A processed-event/inbox record and state-transition checks make duplicate delivery harmless. Expired holds trigger release/compensation so capacity becomes available again.
+Consume reservation events (and, in checkout mode, `payment.requested.v1`), simulate payment outcomes, update reservation state transactionally, and emit follow-up events through the outbox. Processing is at least once. A processed-event/inbox record and state-transition checks make duplicate delivery harmless. Expired holds trigger release/compensation so capacity becomes available again.
 
 ### Redis
 
@@ -70,6 +70,18 @@ AVAILABLE -> HELD -> CONFIRMED
 4. The worker claims the event idempotently and simulates payment. It commits a valid state transition and a corresponding outbox event.
 5. Successful payment changes the reservation to `CONFIRMED`. Failure or expiry releases the held capacity and records `CANCELLED` or `EXPIRED`.
 6. Clients query reservation status; asynchronous outcomes are explicit rather than inferred from a successful HTTP response.
+
+### Checkout mode (`PAYMENT_MODE=checkout`)
+
+Step 4 changes: the worker acknowledges `ReservationHeld` and leaves the hold open. The customer starts payment with `POST /v1/reservations/{id}/payment`, which records a `payments` row (`processing`) and a `payment.requested.v1` outbox event in one transaction. The worker settles that attempt:
+
+```text
+held --pay--> held (payment: processing) --worker--> CONFIRMED   (payment: succeeded)
+                                                 \-> held        (payment: declined, retry allowed)
+                                                 \-> EXPIRED     (hold lapsed, payment: declined/hold_expired)
+```
+
+A decline keeps the hold and its countdown; the customer retries with a new Idempotency-Key. At most one attempt is in flight and one succeeded per reservation (partial unique indexes). Lock order is reservation, then payment, everywhere. See ADR 0007.
 
 The exact endpoint and event schemas are established in API/event contract documents before implementation. State changes must be conditional and reject invalid or repeated transitions safely.
 
