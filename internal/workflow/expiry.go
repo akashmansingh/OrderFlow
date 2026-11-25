@@ -72,6 +72,14 @@ func (expiry *Expiry) RunOnce(ctx context.Context) error {
 		if err := transitionReservation(ctx, tx, reservation, "expired", "hold_expired"); err != nil {
 			return err
 		}
+		// An attempt still in flight can no longer succeed. Settle it so it is not left
+		// "processing" forever; the late payment.requested.v1 event is then a no-op.
+		if _, err := tx.Exec(ctx, `
+			UPDATE payments
+			SET status = 'declined', failure_reason = $2, completed_at = NOW()
+			WHERE reservation_id = $1 AND status = 'processing'`, reservation.ReservationID, reasonHoldExpired); err != nil {
+			return fmt.Errorf("settle in-flight payment for expired reservation: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit expiry transaction: %w", err)
