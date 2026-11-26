@@ -116,7 +116,7 @@ function MinuteCells({ secondsLeft }: { secondsLeft: number }) {
 }
 
 const MESSAGES: Record<string, string> = {
-  held: 'Tickets reserved! Click Pay Now below to complete payment.',
+  held: 'Tickets reserved! Click Pay now below to complete payment.',
   confirmed: 'Payment approved. Reservation secured.',
   cancelled: 'Payment declined. Your tickets are back on sale.',
   expired: 'Hold expired. Your tickets are back on sale.',
@@ -173,7 +173,7 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
   }, [hold.id, token, terminal])
 
   const confirmed = hold.status === 'confirmed'
-  const message = paying ? 'Processing payment asynchronously…' : (MESSAGES[hold.status] ?? MESSAGES.held)
+  const message = !terminal && paying ? 'Processing payment asynchronously…' : (MESSAGES[hold.status] ?? MESSAGES.held)
   const date = formatEventDate(hold.eventStartsAt)
   const windowOver = !terminal && secondsLeft === 0
 
@@ -242,7 +242,7 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
           {!terminal && (
             <button
               type="button"
-              className="btn btn-signal btn-sm flex items-center gap-1.5 font-bold shadow-sm hover:brightness-105 active:scale-[0.98] transition-all"
+              className="btn btn-ink btn-sm flex items-center gap-1.5"
               disabled={paying || windowOver}
               onClick={handlePay}
             >
@@ -252,7 +252,7 @@ export function ReservationStatus({ hold, token, isNew, onUpdate, onInspect }: R
                   Processing…
                 </>
               ) : (
-                '💳 Pay Now'
+                'Pay now'
               )}
             </button>
           )}
